@@ -5,9 +5,8 @@
    - Ao confirmar: salva em localStorage (bancas) e NÃO redireciona
    ========================================= */
 
-// Em vez de http://localhost:3000
+// Usa o mesmo domínio/origem (Render/produção)
 const API = window.location.origin;
- // troque para seu domínio em produção
 
 // ===== Seletores do seu HTML =====
 const cpfInput    = document.querySelector('#cpf');
@@ -38,20 +37,19 @@ function notify(msg, isError=false, time=3200){
 }
 function centsToBRL(c){ return (c/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
 
-// salva no formato que a área lê: [{id,nome,depositoCents,pixType,pixKey,createdAt}]
+// Salva no formato que a área lê: [{id,nome,depositoCents,pixType,pixKey,createdAt}]
 function addToBancas({ nome, valorCentavos, tipo, chave }){
   const registro = {
-  id: Date.now().toString(),
-  nome: dados.nome,
-  depositoCents: valorCentavos,
-  pixType: dados.tipo,
-  pixKey:  dados.chave,
-  createdAt: new Date().toISOString()
-};
-const bancas = JSON.parse(localStorage.getItem('bancas') || '[]');
-bancas.push(registro);
-localStorage.setItem('bancas', JSON.stringify(bancas));
-
+    id: Date.now().toString(),
+    nome,
+    depositoCents: valorCentavos,
+    pixType: tipo,        // 'cpf' | 'aleatoria' | 'telefone' | 'email'
+    pixKey:  chave,
+    createdAt: new Date().toISOString()
+  };
+  const bancas = JSON.parse(localStorage.getItem('bancas') || '[]');
+  bancas.push(registro);
+  localStorage.setItem('bancas', JSON.stringify(bancas));
 }
 
 // ===== Máscaras & Resumo =====
@@ -115,7 +113,7 @@ function isEmail(v){ return /.+@.+\..+/.test(v); }
 function showError(sel, ok){ const el = document.querySelector(sel); ok ? el.classList.remove('show') : el.classList.add('show'); }
 
 // ===== Submit =====
-form.addEventListener('submit', (e) => {
+form.addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const cpfOk   = isCPFValid(cpfInput.value);
@@ -124,29 +122,33 @@ form.addEventListener('submit', (e) => {
   let chaveOk   = true;
   if (tipo !== 'cpf'){
     const v = chaveInput.value.trim();
-    if (tipo === 'email')        chaveOk = isEmail(v);
-    else if (tipo === 'telefone')chaveOk = v.replace(/\D/g,'').length === 11;
-    else                         chaveOk = v.length >= 10; // aleatória
+    if (tipo === 'email')         chaveOk = isEmail(v);
+    else if (tipo === 'telefone') chaveOk = v.replace(/\D/g,'').length === 11;
+    else                          chaveOk = v.length >= 10; // aleatória
   }
-  const valorCents = Number((valorInput.value.replace(/\D/g,'')) || 0);
-  const valorOk    = valorCents >= 1000; // R$10,00
+  const valorCentavos = Number((valorInput.value.replace(/\D/g,'')) || 0);
+  const valorOk       = valorCentavos >= 1000; // R$10,00
 
   showError('#cpfError',  cpfOk);
   showError('#nomeError', nomeOk);
   showError('#chaveError',chaveOk);
   showError('#valorError',valorOk);
 
-  if (cpfOk && nomeOk && chaveOk && valorOk){
-    criarCobrancaPIX({
-      nome: nomeInput.value.trim(),
-      cpf: cpfInput.value,
-      valorCentavos: valorCents,
-      tipo: tipoSelect.value,
-      chave: tipoSelect.value === 'cpf' ? cpfInput.value : chaveInput.value.trim()
-    });
-  } else {
+  if (!(cpfOk && nomeOk && chaveOk && valorOk)){
     notify('Por favor, corrija os campos destacados.', true);
+    return;
   }
+
+  // Monta dados e chama o fluxo de cobrança PIX
+  const dados = {
+    nome:  nomeInput.value.trim(),
+    cpf:   cpfInput.value,
+    tipo:  tipoSelect.value,
+    chave: (tipoSelect.value === 'cpf' ? cpfInput.value : (chaveInput.value || '').trim()),
+    valorCentavos
+  };
+
+  await criarCobrancaPIX(dados);
 });
 
 // ===== Modal de QR (criado por JS) =====
@@ -234,13 +236,13 @@ function ensurePixModal(){
 }
 
 // ===== Backend Efi =====
-async function criarCobrancaPIX({ nome, cpf, valorCentavos, tipo, chave }){
+async function criarCobrancaPIX(dados){
   try{
     // 1) criar cobrança
     const resp = await fetch(`${API}/api/pix/cob`, {
       method:'POST',
       headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ nome, cpf, valorCentavos })
+      body: JSON.stringify({ nome: dados.nome, cpf: dados.cpf, valorCentavos: dados.valorCentavos })
     });
     if(!resp.ok){
       let err = 'Falha ao criar PIX';
@@ -267,14 +269,17 @@ async function criarCobrancaPIX({ nome, cpf, valorCentavos, tipo, chave }){
         st.textContent = 'Pagamento confirmado! ✅';
 
         // >>> SALVA NA ÁREA (bancas) — sem redirecionar
-        addToBancas({ nome, valorCentavos, tipo, chave });
+        addToBancas({
+          nome: dados.nome,
+          valorCentavos: dados.valorCentavos,
+          tipo: dados.tipo,
+          chave: dados.chave
+        });
 
         // fecha modal e avisa
         setTimeout(()=>{
           dlg.close();
-          if (typeof notify === 'function') {
-            notify('Pagamento confirmado! Seus dados já estão na Área.', false, 4500);
-          }
+          notify('Pagamento confirmado! Seus dados já estão na Área.', false, 4500);
         }, 900);
 
         return true;
