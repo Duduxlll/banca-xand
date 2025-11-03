@@ -7,7 +7,7 @@
    ========================================= */
 
 /* ========== Utils base ========== */
-const API = ''; // mesmo domínio
+const API = window.location.origin; // mesmo domínio
 const qs  = (s, r=document) => r.querySelector(s);
 const qsa = (s, r=document) => [...r.querySelectorAll(s)];
 
@@ -16,7 +16,7 @@ function getCookie(name) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-async function apiFetch(path, opts={}) {
+async function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers||{}) };
   // Envia CSRF em métodos que alteram estado
   if (['POST','PUT','PATCH','DELETE'].includes((opts.method||'GET').toUpperCase())) {
@@ -50,16 +50,20 @@ const STATE = {
   timers: new Map(), // id => timeoutId (auto-delete pagos)
 };
 
-/* ========== Carregamento ========== */
+/* ========== Carregamento (preenche STATE) ========== */
 async function loadBancas() {
-  STATE.bancas = await apiFetch('/api/bancas');
+  const list = await apiFetch('/api/bancas');
+  STATE.bancas = list.sort((a,b)=> (a.createdAt||'') < (b.createdAt||'') ? 1 : -1);
+  return STATE.bancas;
 }
 async function loadPagamentos() {
-  STATE.pagamentos = await apiFetch('/api/pagamentos');
+  const list = await apiFetch('/api/pagamentos');
+  STATE.pagamentos = list.sort((a,b)=> (a.createdAt||'') < (b.createdAt||'') ? 1 : -1);
+  return STATE.pagamentos;
 }
 
 /* ========== Render ========== */
-function render(){
+async function render(){
   if (TAB==='bancas'){
     tabBancasEl.classList.add('show');
     tabPagamentosEl.classList.remove('show');
@@ -72,7 +76,7 @@ function render(){
 }
 
 function renderBancas(){
-  const lista = [...STATE.bancas].sort((a,b)=> (a.createdAt||'') < (b.createdAt||'') ? 1 : -1);
+  const lista = STATE.bancas;
 
   tbodyBancas.innerHTML = lista.length ? lista.map(b => {
     const bancaTxt = typeof b.bancaCents === 'number' ? fmtBRL(b.bancaCents) : '';
@@ -96,7 +100,7 @@ function renderBancas(){
 }
 
 function renderPagamentos(){
-  const lista = [...STATE.pagamentos].sort((a,b)=> (a.createdAt||'') < (b.createdAt||'') ? 1 : -1);
+  const lista = STATE.pagamentos;
 
   tbodyPags.innerHTML = lista.length ? lista.map(p => {
     const isPago = p.status === 'pago';
@@ -172,9 +176,7 @@ async function deletePagamento(id){
 
 async function setStatus(id, value){
   const body = JSON.stringify({ status: value });
-  const itemBefore = STATE.pagamentos.find(x=>x.id===id);
   await apiFetch(`/api/pagamentos/${encodeURIComponent(id)}`, { method:'PATCH', body });
-
   await loadPagamentos();
   render();
 

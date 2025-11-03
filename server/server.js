@@ -1,7 +1,6 @@
 // server/server.js
 import 'dotenv/config';
 import fs from 'fs';
-import fsp from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import https from 'https';
@@ -15,64 +14,61 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import axios from 'axios';
 import QRCode from 'qrcode';
+import { Pool } from 'pg';
 
-/* =========================================================
-   .env necessários (Render/produção):
-   ---------------------------------------------------------
-   NODE_ENV=production
-   PORT=10000                        # Render injeta, pode omitir
-   ORIGIN=https://seu-app.onrender.com
-   STATIC_ROOT=..                    # (padrão) raiz do projeto (pai de /server)
+/* ================= .env (produção) =================
+NODE_ENV=production
+ORIGIN=https://seu-app.onrender.com
+STATIC_ROOT=..                  # raiz do site (pai de /server)
+ADMIN_USER=admin
+ADMIN_PASSWORD_HASH=<hash_bcrypt>
+JWT_SECRET=<64+ chars aleatórios>
 
-   ADMIN_USER=admin
-   ADMIN_PASSWORD_HASH=<hash_bcrypt>
-   JWT_SECRET=<64+ chars aleatórios>
+# Postgres (Render)
+DATABASE_URL=postgres://user:pass@host:5432/dbname
 
-   EFI_CLIENT_ID=...
-   EFI_CLIENT_SECRET=...
-   EFI_PIX_KEY=...
-   EFI_BASE_URL=https://pix-h.api.efipay.com.br
-   EFI_OAUTH_URL=https://pix-h.api.efipay.com.br/oauth/token
-   EFI_CERT_PATH=/etc/secrets/client-cert.pem
-   EFI_KEY_PATH=/etc/secrets/client-key.pem
-
-   # Persistência por arquivo (Render Disk)
-   DATA_DIR=/var/data                # ex.: se você criar um Disk
-   ========================================================= */
+# Efi (PIX)
+EFI_CLIENT_ID=...
+EFI_CLIENT_SECRET=...
+EFI_PIX_KEY=...
+EFI_BASE_URL=https://pix-h.api.efipay.com.br
+EFI_OAUTH_URL=https://pix-h.api.efipay.com.br/oauth/token
+EFI_CERT_PATH=/etc/secrets/client-cert.pem
+EFI_KEY_PATH=/etc/secrets/client-key.pem
+==================================================== */
 
 const {
   PORT = 3000,
   ORIGIN = `http://localhost:3000`,
-  STATIC_ROOT, // opcional; default = pai de /server
+  STATIC_ROOT,
   ADMIN_USER = 'admin',
   ADMIN_PASSWORD_HASH,
   JWT_SECRET,
+  DATABASE_URL,
   EFI_CLIENT_ID,
   EFI_CLIENT_SECRET,
   EFI_CERT_PATH,
   EFI_KEY_PATH,
   EFI_BASE_URL,
   EFI_OAUTH_URL,
-  EFI_PIX_KEY,
-  DATA_DIR
+  EFI_PIX_KEY
 } = process.env;
 
 const PROD = process.env.NODE_ENV === 'production';
 
-// ===== valida env do login =====
-['ADMIN_USER','ADMIN_PASSWORD_HASH','JWT_SECRET'].forEach(k=>{
-  if(!process.env[k]) { console.error(`❌ Falta ${k} no .env (login)`); process.exit(1); }
+/* ===== valida env ===== */
+['ADMIN_USER','ADMIN_PASSWORD_HASH','JWT_SECRET','DATABASE_URL'].forEach(k=>{
+  if(!process.env[k]) { console.error(`❌ Falta ${k} no .env`); process.exit(1); }
 });
-// ===== valida env do Efi =====
 ['EFI_CLIENT_ID','EFI_CLIENT_SECRET','EFI_CERT_PATH','EFI_KEY_PATH','EFI_PIX_KEY','EFI_BASE_URL','EFI_OAUTH_URL']
   .forEach(k => { if(!process.env[k]) { console.error(`❌ Falta ${k} no .env (Efi)`); process.exit(1); } });
 
-// ===== paths =====
+/* ===== paths ===== */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-const ROOT       = path.resolve(__dirname, STATIC_ROOT || '..'); // raiz do site (index.html, area.html, assets/)
+const ROOT       = path.resolve(__dirname, STATIC_ROOT || '..');
 
-// ===== HTTPS agent APENAS para chamadas ao Efi =====
+/* ===== HTTPS agent Efi ===== */
 const httpsAgent = new https.Agent({
   cert: fs.readFileSync(EFI_CERT_PATH),
   key:  fs.readFileSync(EFI_KEY_PATH),
@@ -92,49 +88,55 @@ async function getAccessToken() {
   return resp.data.access_token;
 }
 
-// ===== Persistência simples (arquivo JSON) =====
-const DATA_DIR_FINAL  = DATA_DIR || path.join(__dirname, 'data');
-const DATA_FILE       = path.join(DATA_DIR_FINAL, 'db.json');
+/* ===== Postgres ===== */
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false } // Render PG
+});
 
-async function ensureData(){
-  try { await fsp.mkdir(DATA_DIR_FINAL, { recursive: true }); } catch {}
-  try { await fsp.access(DATA_FILE); }
-  catch { await fsp.writeFile(DATA_FILE, JSON.stringify({ bancas: [], pagamentos: [] }, null, 2)); }
-}
-async function readDB(){
-  await ensureData();
-  const raw = await fsp.readFile(DATA_FILE, 'utf8');
-  return JSON.parse(raw || '{"bancas":[],"pagamentos":[]}');
-}
-async function writeDB(db){
-  await ensureData();
-  await fsp.writeFile(DATA_FILE, JSON.stringify(db, null, 2));
+async function initDB(){
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bancas (
+      id TEXT PRIMARY KEY,
+      nome TEXT NOT NULL,
+      deposito_cents INT NOT NULL,
+      banca_cents INT,
+      pix_type TEXT,
+      pix_key  TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pagamentos (
+      id TEXT PRIMARY KEY,
+      nome TEXT NOT NULL,
+      pagamento_cents INT NOT NULL,
+      pix_type TEXT,
+      pix_key  TEXT,
+      status TEXT NOT NULL DEFAULT 'nao_pago' CHECK (status IN ('pago','nao_pago')),
+      paid_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
 }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
-// ===== app base =====
+/* ===== app base ===== */
 const app = express();
-
-// Proxies (Render) — cookies secure/samesite corretos
 app.set('trust proxy', 1);
 
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
-app.use(express.json());
+app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
+app.use(cors({ origin: ORIGIN, credentials: true }));
+app.options('*', cors({ origin: ORIGIN, credentials: true }));
 
-// Se o front for servido por este mesmo servidor, CORS é pouco usado.
-// Mantido para cenários multi-domínio:
-app.use(cors({
-  origin: ORIGIN,
-  credentials: true
-}));
-
-// Servir estáticos (site completo)
+// estáticos do site
 app.use(express.static(ROOT, { extensions: ['html'] }));
 
-// ===== helpers de auth =====
+/* ===== auth helpers ===== */
 const loginLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 20,
@@ -153,8 +155,8 @@ function randomHex(n=32){ return crypto.randomBytes(n).toString('hex'); }
 function setAuthCookies(res, token) {
   const common = {
     sameSite: 'strict',
-    secure: PROD,               // 🔒 em produção: true
-    maxAge: 2 * 60 * 60 * 1000, // 2h
+    secure: PROD,
+    maxAge: 2 * 60 * 60 * 1000,
     path: '/'
   };
   res.cookie('session', token, { ...common, httpOnly: true });
@@ -165,13 +167,11 @@ function clearAuthCookies(res){
   res.clearCookie('session', { ...common, httpOnly:true });
   res.clearCookie('csrf',    { ...common });
 }
-
 function requireAuth(req, res, next){
   const token = req.cookies?.session;
   const data = token && verifySession(token);
   if (!data) return res.status(401).json({ error: 'unauthorized' });
 
-  // CSRF para métodos que alteram estado
   if (['POST','PUT','PATCH','DELETE'].includes(req.method)) {
     const csrfHeader = req.get('X-CSRF-Token');
     const csrfCookie = req.cookies?.csrf;
@@ -183,14 +183,13 @@ function requireAuth(req, res, next){
   next();
 }
 
-// ===== rotas de auth =====
+/* ===== rotas de auth ===== */
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'missing_fields' });
 
   const userOk = username === ADMIN_USER;
   const passOk = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
-
   if (!userOk || !passOk) return res.status(401).json({ error: 'invalid_credentials' });
 
   const token = signSession({ sub: ADMIN_USER, role: 'admin' });
@@ -198,7 +197,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
   return res.json({ ok: true });
 });
 
-app.post('/api/auth/logout', (req, res) => {
+app.post('/api/auth/logout', requireAuth, (req, res) => {
   clearAuthCookies(res);
   return res.json({ ok:true });
 });
@@ -210,32 +209,26 @@ app.get('/api/auth/me', (req, res) => {
   return res.json({ user: { username: data.sub } });
 });
 
-// Protege a área
+// protege a área
 app.get('/area.html', (req, res) => {
   const token = req.cookies?.session;
   if (!token || !verifySession(token)) return res.redirect('/login.html');
   return res.sendFile(path.join(ROOT, 'area.html'));
 });
 
-// ===== endpoints de verificação geral =====
-app.get('/health', (req, res) => {
+/* ===== verificação ===== */
+app.get('/health', async (req, res) => {
   try {
+    // confere certificados e conexão ao PG
     fs.accessSync(EFI_CERT_PATH); fs.accessSync(EFI_KEY_PATH);
-    return res.json({ ok:true, cert:EFI_CERT_PATH, key:EFI_KEY_PATH, dataDir: DATA_DIR_FINAL });
-  } catch {
-    return res.status(500).json({ ok:false, msg:'Cert/Key não encontrados' });
-  }
-});
-app.get('/api/pix/ping', async (req, res) => {
-  try {
-    const token = await getAccessToken();
-    return res.json({ ok:true, token:true });
+    await pool.query('SELECT 1;');
+    return res.json({ ok:true, cert:EFI_CERT_PATH, key:EFI_KEY_PATH, pg:true });
   } catch (e) {
-    return res.status(500).json({ ok:false, error: e.response?.data || e.message });
+    return res.status(500).json({ ok:false, msg:String(e?.message||e) });
   }
 });
 
-// ===== API PIX (Efi) =====
+/* ===== PIX (Efi) ===== */
 app.post('/api/pix/cob', async (req, res) => {
   try {
     const { nome, cpf, valorCentavos } = req.body || {};
@@ -254,8 +247,7 @@ app.post('/api/pix/cob', async (req, res) => {
     };
 
     const { data: cob } = await axios.post(
-      `${EFI_BASE_URL}/v2/cob`,
-      payload,
+      `${EFI_BASE_URL}/v2/cob`, payload,
       { httpsAgent, headers: { Authorization: `Bearer ${token}` } }
     );
     const { txid, loc } = cob;
@@ -288,14 +280,18 @@ app.get('/api/pix/status/:txid', async (req, res) => {
   }
 });
 
-// ====== MIDDLEWARE: todas as rotas da Área exigem login ======
+/* ===== Área (precisa login) — Postgres ===== */
 const areaAuth = [requireAuth];
 
-// ====== BANCAS ======
+/* Bancas */
 app.get('/api/bancas', areaAuth, async (req, res) => {
-  const db = await readDB();
-  const list = [...db.bancas].sort((a,b) => (a.createdAt||'') < (b.createdAt||'') ? 1 : -1);
-  res.json(list);
+  const { rows } = await pool.query(
+    `SELECT id, nome, deposito_cents AS "depositoCents", banca_cents AS "bancaCents",
+            pix_type AS "pixType", pix_key AS "pixKey", created_at AS "createdAt"
+     FROM bancas
+     ORDER BY created_at DESC`
+  );
+  res.json(rows);
 });
 
 app.post('/api/bancas', areaAuth, async (req, res) => {
@@ -303,87 +299,116 @@ app.post('/api/bancas', areaAuth, async (req, res) => {
   if (!nome || typeof depositoCents !== 'number' || depositoCents <= 0) {
     return res.status(400).json({ error: 'dados_invalidos' });
   }
-  const db = await readDB();
-  const item = { id: uid(), nome, depositoCents, pixType, pixKey, createdAt: new Date().toISOString() };
-  db.bancas.push(item);
-  await writeDB(db);
-  res.json(item);
+  const id = uid();
+  const { rows } = await pool.query(
+    `INSERT INTO bancas (id, nome, deposito_cents, banca_cents, pix_type, pix_key)
+     VALUES ($1,$2,$3,NULL,$4,$5)
+     RETURNING id, nome, deposito_cents AS "depositoCents", banca_cents AS "bancaCents",
+               pix_type AS "pixType", pix_key AS "pixKey", created_at AS "createdAt"`,
+    [id, nome, depositoCents, pixType, pixKey]
+  );
+  res.json(rows[0]);
 });
 
 app.patch('/api/bancas/:id', areaAuth, async (req, res) => {
   const { bancaCents } = req.body || {};
-  const db = await readDB();
-  const item = db.bancas.find(x => x.id === req.params.id);
-  if (!item) return res.status(404).json({ error: 'not_found' });
-  if (typeof bancaCents === 'number' && bancaCents >= 0) item.bancaCents = bancaCents;
-  await writeDB(db);
-  res.json(item);
+  if (typeof bancaCents !== 'number' || bancaCents < 0) {
+    return res.status(400).json({ error: 'dados_invalidos' });
+  }
+  const { rows } = await pool.query(
+    `UPDATE bancas SET banca_cents = $2 WHERE id = $1
+     RETURNING id, nome, deposito_cents AS "depositoCents", banca_cents AS "bancaCents",
+               pix_type AS "pixType", pix_key AS "pixKey", created_at AS "createdAt"`,
+    [req.params.id, bancaCents]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'not_found' });
+  res.json(rows[0]);
 });
 
 app.post('/api/bancas/:id/to-pagamento', areaAuth, async (req, res) => {
-  const db = await readDB();
-  const ix = db.bancas.findIndex(x => x.id === req.params.id);
-  if (ix < 0) return res.status(404).json({ error: 'not_found' });
-  const b = db.bancas[ix];
-  db.bancas.splice(ix,1);
+  const client = await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const bRes = await client.query(
+      `SELECT id, nome, deposito_cents, COALESCE(banca_cents, deposito_cents) AS valor,
+              pix_type, pix_key, created_at
+       FROM bancas WHERE id = $1 FOR UPDATE`, [req.params.id]
+    );
+    if (!bRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'not_found' });
+    }
+    const b = bRes.rows[0];
 
-  const valor = (typeof b.bancaCents === 'number' && b.bancaCents>0) ? b.bancaCents : b.depositoCents;
+    await client.query(`DELETE FROM bancas WHERE id = $1`, [req.params.id]);
 
-  db.pagamentos.push({
-    id: b.id,
-    nome: b.nome,
-    pagamentoCents: valor,
-    pixType: b.pixType || null,
-    pixKey:  b.pixKey  || null,
-    status: 'nao_pago',
-    createdAt: b.createdAt
-  });
+    await client.query(
+      `INSERT INTO pagamentos (id, nome, pagamento_cents, pix_type, pix_key, status, paid_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,'nao_pago',NULL,$6)`,
+      [b.id, b.nome, b.valor, b.pix_type, b.pix_key, b.created_at]
+    );
 
-  await writeDB(db);
-  res.json({ ok:true });
+    await client.query('COMMIT');
+    res.json({ ok:true });
+  }catch(e){
+    await client.query('ROLLBACK');
+    console.error(e);
+    res.status(500).json({ error: 'fail' });
+  }finally{
+    client.release();
+  }
 });
 
 app.delete('/api/bancas/:id', areaAuth, async (req, res) => {
-  const db = await readDB();
-  const before = db.bancas.length;
-  db.bancas = db.bancas.filter(x => x.id !== req.params.id);
-  if (db.bancas.length === before) return res.status(404).json({ error: 'not_found' });
-  await writeDB(db);
+  const r = await pool.query(`DELETE FROM bancas WHERE id = $1`, [req.params.id]);
+  if (r.rowCount === 0) return res.status(404).json({ error: 'not_found' });
   res.json({ ok:true });
 });
 
-// ====== PAGAMENTOS ======
+/* Pagamentos */
 app.get('/api/pagamentos', areaAuth, async (req, res) => {
-  const db = await readDB();
-  const list = [...db.pagamentos].sort((a,b) => (a.createdAt||'') < (b.createdAt||'') ? 1 : -1);
-  res.json(list);
+  const { rows } = await pool.query(
+    `SELECT id, nome, pagamento_cents AS "pagamentoCents", pix_type AS "pixType",
+            pix_key AS "pixKey", status, paid_at AS "paidAt", created_at AS "createdAt"
+     FROM pagamentos
+     ORDER BY created_at DESC`
+  );
+  res.json(rows);
 });
 
 app.patch('/api/pagamentos/:id', areaAuth, async (req, res) => {
-  const { status } = req.body || {}; // 'pago' | 'nao_pago'
+  const { status } = req.body || {};
   if (!['pago','nao_pago'].includes(status)) return res.status(400).json({ error: 'status_invalido' });
-  const db = await readDB();
-  const p = db.pagamentos.find(x => x.id === req.params.id);
-  if (!p) return res.status(404).json({ error: 'not_found' });
-  p.status = status;
-  p.paidAt = (status === 'pago') ? new Date().toISOString() : undefined;
-  await writeDB(db);
-  res.json(p);
+
+  const paidAt = (status === 'pago') ? new Date() : null;
+
+  const { rows } = await pool.query(
+    `UPDATE pagamentos
+       SET status = $2, paid_at = $3
+     WHERE id = $1
+     RETURNING id, nome, pagamento_cents AS "pagamentoCents", pix_type AS "pixType",
+               pix_key AS "pixKey", status, paid_at AS "paidAt", created_at AS "createdAt"`,
+    [req.params.id, status, paidAt]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'not_found' });
+  res.json(rows[0]);
 });
 
 app.delete('/api/pagamentos/:id', areaAuth, async (req, res) => {
-  const db = await readDB();
-  const before = db.pagamentos.length;
-  db.pagamentos = db.pagamentos.filter(x => x.id !== req.params.id);
-  if (db.pagamentos.length === before) return res.status(404).json({ error: 'not_found' });
-  await writeDB(db);
+  const r = await pool.query(`DELETE FROM pagamentos WHERE id = $1`, [req.params.id]);
+  if (r.rowCount === 0) return res.status(404).json({ error: 'not_found' });
   res.json({ ok:true });
 });
 
-// ===== start =====
-app.listen(PORT, () => {
-  console.log(`✅ Server rodando em ${ORIGIN} (NODE_ENV=${process.env.NODE_ENV||'dev'})`);
-  console.log(`🗂  Servindo estáticos de: ${ROOT}`);
-  console.log(`💾 DATA_DIR: ${DATA_DIR_FINAL}`);
-  console.log(`🔒 /area.html protegido por sessão; login em /login.html`);
+/* start */
+initDB().then(()=>{
+  app.listen(PORT, () => {
+    console.log(`✅ Server rodando em ${ORIGIN} (NODE_ENV=${process.env.NODE_ENV||'dev'})`);
+    console.log(`🗂  Servindo estáticos de: ${ROOT}`);
+    console.log(`🗄️  Postgres conectado`);
+    console.log(`🔒 /area.html protegido por sessão; login em /login.html`);
+  });
+}).catch((e)=>{
+  console.error('❌ Falha ao iniciar DB:', e);
+  process.exit(1);
 });
