@@ -272,3 +272,93 @@ body{
   border: 1px solid rgba(255,255,255,.22) !important;
   box-shadow: 0 30px 90px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.04) !important;
 }
+/* ================================
+   TRANSIÇÕES DE ABAS (combina com area.js)
+   - .tab-view é aplicado no DOMContentLoaded
+   - .show controla visibilidade
+   - .transitioning habilita o fade/slide
+   ================================ */
+.tab-view{
+  display:none;              /* padrão: escondido */
+  opacity:0;                 /* prepara o fade */
+  transform: translateY(8px);/* leve deslize para baixo */
+  transition: opacity .22s ease, transform .22s ease;
+  will-change: opacity, transform;
+}
+.tab-view.show{ display:block; }
+/* quando o JS liga a transição, animamos a ENTRADA */
+.tab-view.transitioning.show{
+  opacity:1;
+  transform: translateY(0);
+}
+/* acessibilidade: desativa animações se o usuário preferir */
+@media (prefers-reduced-motion: reduce){
+  .tab-view{ transition: none !important; transform:none !important; }
+}
+
+/* ================================
+   SKELETON LOADER (lista/tabela)
+   - criado pelo area.js com .skel-box dentro de .table-wrap
+   ================================ */
+.skel-box{
+  position:absolute; inset:0;
+  padding:12px; display:grid; gap:10px;
+  background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0));
+  pointer-events:none;       /* não intercepta cliques */
+  z-index: 4;                /* abaixo do thead sticky (z=5) */
+}
+.skel-row{
+  height:42px; border-radius:12px;
+  position:relative; overflow:hidden;
+  background: rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.06);
+}
+.skel-row::after{
+  content:"";
+  position:absolute; inset:0;
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0) 0%,
+    rgba(255,255,255,.08) 45%,
+    rgba(255,255,255,0) 90%);
+  animation: skelShimmer 1.2s infinite;
+  transform: translateX(-60%);
+}
+@keyframes skelShimmer{
+  from { transform: translateX(-60%); }
+  to   { transform: translateX(120%); }
+}
+@media (prefers-reduced-motion: reduce){
+  .skel-row::after{ animation:none; }
+}
+
+/* ================================
+   MICRO-ANIMAÇÃO NAS LINHAS AO ENTRAR
+   (só quando a aba fica visível)
+   ================================ */
+@keyframes rowIn{
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.tab-view.show .table tbody tr{
+  animation: rowIn .18s ease both;
+}
+/* leve escalonamento para dar “fluidez” */
+.tab-view.show .table tbody tr:nth-child(1){ animation-delay:.00s }
+.tab-view.show .table tbody tr:nth-child(2){ animation-delay:.015s }
+.tab-view.show .table tbody tr:nth-child(3){ animation-delay:.03s }
+.tab-view.show .table tbody tr:nth-child(4){ animation-delay:.045s }
+.tab-view.show .table tbody tr:nth-child(5){ animation-delay:.06s }
+
+/* ================================
+   SUAVIDADE/RENDERIZAÇÃO
+   ================================ */
+.table-wrap{
+  contain: paint;            /* isola pintura (melhora scroll/anim) */
+  will-change: transform;    /* dá pista ao compositor do browser */
+}
+
+/* garante que skeleton e dropdown não sejam cortados */
+.table tbody tr, .table tbody td { overflow: visible; }
+
+/* mantém a hierarquia de camadas ok (já tinha no seu CSS) */
+.status-float{ z-index: 99999; }
