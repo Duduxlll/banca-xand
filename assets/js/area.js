@@ -1,5 +1,4 @@
- 
-/* =========================================
+  /* =========================================
    area.js — Bancas & Pagamentos (via API)
    - Bancas: Nome | Depósito | Banca(editável) | Ações
    - Pagamentos: Nome | Pagamento | Ações (Fazer PIX, Pago/Não pago, Excluir)

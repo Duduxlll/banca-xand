@@ -2,7 +2,7 @@
    Depósito PIX – front (produção)
    - Cria modal do QR por JS
    - Chama backend Efi (/api/pix/cob e /api/pix/status/:txid)
-   - Ao confirmar: registra no servidor (/api/public/bancas)
+   - Ao confirmar: registra no servidor (/api/pix/confirmar)
      e cai para localStorage se o servidor rejeitar
    ========================================= */
 
@@ -18,7 +18,6 @@ const chaveInput  = document.querySelector('#chavePix');
 const valorInput  = document.querySelector('#valor');
 const form        = document.querySelector('#depositoForm');
 const toast       = document.querySelector('#toast');
-const btnSubmit   = document.querySelector('#btnDepositar');
 
 // Resumo
 const rCpf     = document.querySelector('#r-cpf');
@@ -38,30 +37,17 @@ function notify(msg, isError=false, time=3200){
   toast.classList.add('show');
   setTimeout(()=>toast.classList.remove('show'), time);
 }
-
 function centsToBRL(c){ return (c/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
 function toCentsMasked(str){ return Number((str||'').replace(/\D/g,'')||0); }
-function getMeta(name){
-  const el = document.querySelector(`meta[name="${name}"]`);
-  return el ? el.content : '';
-}
 
 /* ===== Persistência ===== */
-// Salva no servidor (rota pública) se houver APP_PUBLIC_KEY (meta ou global)
-async function saveOnServer({ nome, valorCentavos, tipo, chave }){
-  const APP_KEY = (window.APP_PUBLIC_KEY && String(window.APP_PUBLIC_KEY)) || getMeta('app-key') || '';
-  const res = await fetch(`${API}/api/public/bancas`, {
+
+// 1) Salva UNIVERSAL no servidor (rota pública que valida o TXID e grava)
+async function saveOnServer({ txid, nome, valorCentavos, tipo, chave }){
+  const res = await fetch(`${API}/api/pix/confirmar`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(APP_KEY ? { 'X-APP-KEY': APP_KEY } : {})
-    },
-    body: JSON.stringify({
-      nome,
-      depositoCents: valorCentavos,
-      pixType:  tipo,
-      pixKey:   chave
-    })
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify({ txid, nome, valorCentavos, tipo, chave })
   });
   if(!res.ok){
     let msg = '';
@@ -71,7 +57,7 @@ async function saveOnServer({ nome, valorCentavos, tipo, chave }){
   return res.json();
 }
 
-// Fallback local (visível só neste navegador)
+// 2) Fallback local (visível só neste navegador)
 function saveLocal({ nome, valorCentavos, tipo, chave }){
   const registro = {
     id: Date.now().toString(),
@@ -95,7 +81,6 @@ cpfInput.addEventListener('input', () => {
   cpfInput.value = v;
   rCpf.textContent = v || '—';
 });
-
 nomeInput.addEventListener('input', () => rNome.textContent = nomeInput.value.trim() || '—');
 
 tipoSelect.addEventListener('change', () => {
@@ -274,19 +259,11 @@ form.addEventListener('submit', async (e) => {
     nome:  nomeInput.value.trim(),
     cpf:   cpfInput.value,
     tipo:  tipoSelect.value,
-    chave: (tipoSelect.value === 'cpf' ? cpfInput.value : (chaveInput.value || '').trim() ),
+    chave: (tipoSelect.value === 'cpf' ? cpfInput.value : (chaveInput.value || '').trim()),
     valorCentavos
   };
 
-  // dica: se não houver APP_PUBLIC_KEY no front, avisa (evita confusão)
-  const hasAppKey = !!(window.APP_PUBLIC_KEY || getMeta('app-key'));
-  if(!hasAppKey){
-    console.warn('APP_PUBLIC_KEY ausente no front (meta[name="app-key"] ou window.APP_PUBLIC_KEY). A rota pública pode recusar.');
-  }
-
   try{
-    btnSubmit && (btnSubmit.disabled = true);
-
     // 1) criar a cobrança
     const { txid, emv, qrPng } = await criarCobrancaPIX({
       nome: dados.nome, cpf: dados.cpf, valorCentavos: dados.valorCentavos
@@ -317,15 +294,17 @@ form.addEventListener('submit', async (e) => {
           clearInterval(timer);
           st.textContent = 'Pagamento confirmado! ✅';
 
-          // 4) registra no servidor (público) e, se falhar, salva local
+          // 4) registra de forma universal
           try{
             await saveOnServer({
+              txid,
               nome: dados.nome,
               valorCentavos: dados.valorCentavos,
               tipo: dados.tipo,
               chave: dados.chave
             });
           }catch(_err){
+            // fallback local se o servidor não aceitar
             saveLocal({
               nome: dados.nome,
               valorCentavos: dados.valorCentavos,
@@ -350,7 +329,5 @@ form.addEventListener('submit', async (e) => {
   }catch(e){
     console.error(e);
     notify('Não foi possível iniciar o PIX. Tente novamente.', true);
-  }finally{
-    btnSubmit && (btnSubmit.disabled = false);
   }
 });
