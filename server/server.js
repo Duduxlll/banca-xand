@@ -21,9 +21,9 @@ const { Pool } = pkg;
    .env esperados (Render/produção)
    ---------------------------------------------------------
    NODE_ENV=production
-   PORT=10000                       # Render injeta, pode omitir
+   PORT=10000
    ORIGIN=https://seu-app.onrender.com
-   STATIC_ROOT=..                   # (padrão) raiz do projeto (pai de /server)
+   STATIC_ROOT=..             # raiz do site (pai de /server)
 
    ADMIN_USER=admin
    ADMIN_PASSWORD_HASH=<hash_bcrypt>
@@ -179,6 +179,43 @@ function requireAuth(req, res, next){
   next();
 }
 
+// =========================================================
+// SSE (Server-Sent Events) — stream de eventos da Área
+// =========================================================
+const sseClients = new Set();
+
+function sseSendAll(event, payload = {}) {
+  const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const msg = `event: ${event}\ndata: ${data}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(msg); } catch {}
+  }
+}
+
+// Stream protegido por sessão (mesmo cookie)
+app.get('/api/stream', requireAuth, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  // CORS c/ credenciais (se front/back em domínios diferentes)
+  res.setHeader('Access-Control-Allow-Origin', ORIGIN);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+  res.flushHeaders?.();
+  sseClients.add(res);
+
+  // keepalive
+  const ping = setInterval(() => {
+    try { res.write(`event: ping\ndata: {}\n\n`); } catch {}
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(ping);
+    sseClients.delete(res);
+    try { res.end(); } catch {}
+  });
+});
+
 // ===== rotas de auth =====
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const { username, password } = req.body || {};
@@ -286,7 +323,7 @@ app.get('/api/pix/status/:txid', async (req, res) => {
 });
 
 /* =========================================================
-   NOVO: PUBLIC/SEGURO — confirmar pagamento por TXID
+   PUBLIC/SEGURO — confirmar pagamento por TXID
    - Requer header X-APP-KEY igual a APP_PUBLIC_KEY
    - Valida na Efi: status = "CONCLUIDA" e valor bate
    - Grava em "bancas"
@@ -321,8 +358,8 @@ app.post('/api/pix/confirmar', async (req, res) => {
       return res.status(409).json({ error:'valor_divergente' });
     }
 
-    // 3) insere/atualiza em bancas
-    const id = uid(); // podemos usar o próprio txid como id se preferir
+    // 3) insere em bancas
+    const id = uid(); // pode usar o próprio txid, se preferir
     const { rows } = await q(
       `insert into bancas (id, nome, deposito_cents, banca_cents, pix_type, pix_key, created_at)
        values ($1,$2,$3,$4,$5,$6, now())
@@ -334,6 +371,9 @@ app.post('/api/pix/confirmar', async (req, res) => {
                  created_at     as "createdAt"`,
       [id, nome, valorCentavos, null, tipo, chave]
     );
+
+    // broadcast p/ quem está na Área
+    sseSendAll('bancas-changed', { reason: 'insert-confirmed' });
 
     return res.json({ ok:true, ...rows[0] });
   }catch(e){
@@ -365,6 +405,9 @@ app.post('/api/public/bancas', async (req, res) => {
                  pix_type as "pixType", pix_key as "pixKey", created_at as "createdAt"`,
       [id, nome, depositoCents, null, pixType, pixKey]
     );
+
+    sseSendAll('bancas-changed', { reason: 'insert-public' });
+
     return res.json(rows[0]);
   }catch(e){
     console.error('public/bancas:', e.message);
@@ -377,16 +420,6 @@ const areaAuth = [requireAuth];
 
 /* =========================================================
    BANCAS (Postgres)
-   Tabela esperada:
-   create table if not exists bancas(
-     id text primary key,
-     nome text not null,
-     deposito_cents integer not null,
-     banca_cents integer,
-     pix_type text,
-     pix_key text,
-     created_at timestamptz default now()
-   );
    ========================================================= */
 app.get('/api/bancas', areaAuth, async (req, res) => {
   const { rows } = await q(
@@ -415,6 +448,9 @@ app.post('/api/bancas', areaAuth, async (req, res) => {
                pix_type as "pixType", pix_key as "pixKey", created_at as "createdAt"`,
     [id, nome, depositoCents, null, pixType, pixKey]
   );
+
+  sseSendAll('bancas-changed', { reason: 'insert' });
+
   res.json(rows[0]);
 });
 
@@ -435,6 +471,9 @@ app.patch('/api/bancas/:id', areaAuth, async (req, res) => {
     [req.params.id, bancaCents]
   );
   if (!rows.length) return res.status(404).json({ error:'not_found' });
+
+  sseSendAll('bancas-changed', { reason: 'update' });
+
   res.json(rows[0]);
 });
 
@@ -467,6 +506,10 @@ app.post('/api/bancas/:id/to-pagamento', areaAuth, async (req, res) => {
     await client.query(`delete from bancas where id = $1`, [b.id]);
 
     await client.query('commit');
+
+    sseSendAll('bancas-changed', { reason: 'moved' });
+    sseSendAll('pagamentos-changed', { reason: 'moved' });
+
     res.json({ ok:true });
   }catch(e){
     await client.query('rollback');
@@ -480,22 +523,14 @@ app.post('/api/bancas/:id/to-pagamento', areaAuth, async (req, res) => {
 app.delete('/api/bancas/:id', areaAuth, async (req, res) => {
   const r = await q(`delete from bancas where id = $1`, [req.params.id]);
   if (r.rowCount === 0) return res.status(404).json({ error:'not_found' });
+
+  sseSendAll('bancas-changed', { reason: 'delete' });
+
   res.json({ ok:true });
 });
 
 /* =========================================================
    PAGAMENTOS (Postgres)
-   Tabela esperada:
-   create table if not exists pagamentos(
-     id text primary key,
-     nome text not null,
-     pagamento_cents integer not null,
-     pix_type text,
-     pix_key text,
-     status text not null check (status in ('pago','nao_pago')),
-     created_at timestamptz default now(),
-     paid_at timestamptz
-   );
    ========================================================= */
 app.get('/api/pagamentos', areaAuth, async (req, res) => {
   const { rows } = await q(
@@ -525,16 +560,22 @@ app.patch('/api/pagamentos/:id', areaAuth, async (req, res) => {
                pagamento_cents as "pagamentoCents",
                pix_type as "pixType",
                pix_key  as "pixKey",
-               status, created_at as "createdAt", paid_at as "PaidAt"`,
+               status, created_at as "createdAt", paid_at as "paidAt"`,
     [req.params.id, status]
   );
   if (!rows.length) return res.status(404).json({ error:'not_found' });
+
+  sseSendAll('pagamentos-changed', { reason: 'update-status' });
+
   res.json(rows[0]);
 });
 
 app.delete('/api/pagamentos/:id', areaAuth, async (req, res) => {
   const r = await q(`delete from pagamentos where id = $1`, [req.params.id]);
   if (r.rowCount === 0) return res.status(404).json({ error:'not_found' });
+
+  sseSendAll('pagamentos-changed', { reason: 'delete' });
+
   res.json({ ok:true });
 });
 

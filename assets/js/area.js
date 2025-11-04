@@ -440,11 +440,10 @@ let es = null;
 
 function startStream(){
   if (es) try { es.close(); } catch {}
-  // mesma origem; cookies inclusos
-  es = new EventSource(`${API}/api/stream`, { withCredentials: true });
+  // mesma origem; cookies inclusos automaticamente em mesma origem
+  es = new EventSource(`${API}/api/stream`);
 
   const softRefreshBancas = debounce(async () => {
-    // Atualiza sempre a lista correspondente; mantém aba atual
     await loadBancas();
     if (TAB === 'bancas') {
       render();
