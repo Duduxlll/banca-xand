@@ -5,8 +5,8 @@
   --line:rgba(255,255,255,.08);
   --muted:#9aa1c3;
   --text:#e7e9f3;
-  --brand:#6e8cff;      /* azul marinho vibrante */
-  --brand-2:#2bb4ff;    /* azul claro para gradiente */
+  --brand:#6e8cff;
+  --brand-2:#2bb4ff;
   --ok:#00d18f;
   --warn:#ffc857;
   --danger:#ff5c7a;
@@ -33,8 +33,7 @@ body{
 }
 .hero-overlay{
   position:absolute; inset:0;
-  background:
-    radial-gradient(1000px 400px at 60% -40%, rgba(46,139,255,.25), transparent 60%);
+  background: radial-gradient(1000px 400px at 60% -40%, rgba(46,139,255,.25), transparent 60%);
   pointer-events:none;
 }
 .hero-wrap{position:relative; display:flex; align-items:center; gap:16px; padding:24px 24px 32px 24px; width:min(1120px, 92vw); margin:0 auto;}
@@ -70,38 +69,55 @@ body{
 }
 .input:focus{border-color: rgba(110,140,255,.5); box-shadow:0 0 0 4px rgba(110,140,255,.18)}
 
+/* ---------- CARD ---------- */
 .card{
   background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
   border:1px solid var(--line);
   border-radius:16px;
   box-shadow:var(--shadow);
-  overflow:hidden; /* garante cantos do header colados ao card */
-}
-.table-wrap{
-  overflow:auto;
-  max-height:460px;
-  overscroll-behavior: contain;
-  contain: paint;            /* melhora scroll/anim */
-  will-change: transform;
+  overflow:hidden; /* cabeçalho cola nos cantos */
 }
 
 /* ---------- TABELA ---------- */
-.table{width:100%; border-collapse:separate; border-spacing:0}
-.table thead th{
-  text-align:left; padding:14px; color:#cbd3ff; font-weight:700;
-  position: sticky; top: 0; z-index: 5;
-  background: #0d1330;        /* sólido: elimina “fantasma” no topo */
-  border-bottom:1px solid var(--line);
-  -webkit-backface-visibility: hidden; backface-visibility: hidden;
+.table-wrap{
+  max-height:460px;
+  overflow-y:auto;               /* só vertical */
+  overflow-x:hidden;             /* remove barra horizontal */
+  overscroll-behavior: contain;
+  position:relative;
+  scrollbar-gutter: stable both-edges; /* evita “salto” quando aparece o scroll */
+  contain: paint;
+  will-change: transform;
 }
-.table thead th:first-child{ border-top-left-radius: 12px; }
-.table thead th:last-child{  border-top-right-radius: 12px; text-align:left; }
 
+.table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  table-layout:fixed;            /* colunas firmes (nada “pula”) */
+}
+
+/* fundo azul escuro no THEAD inteiro */
+.table thead{
+  position:sticky; top:0; z-index:5;
+  background:#0d1330;
+}
+.table thead th{
+  background:transparent;        /* sem fundo por célula */
+  text-align:left; padding:14px; color:#cbd3ff; font-weight:700;
+  border-bottom:1px solid var(--line);
+  -webkit-backface-visibility:hidden; backface-visibility:hidden;
+}
+
+/* corpo */
 .table tbody td{ padding:14px; border-bottom:1px solid rgba(255,255,255,.06); }
-.table tbody tr{ position: relative; }
-.col-acoes{ width:1%; white-space:nowrap }
+.table tbody tr{ position:relative; }
 
-/* Banca input (inline) */
+/* coluna Ações idêntica no thead/tbody */
+.table thead th.col-acoes,
+.table tbody td.col-acoes{ white-space:nowrap; width:1%; }
+
+/* input de banca inline */
 .table input.input-money{ min-width:140px; }
 
 /* ---------- BOTÕES ---------- */
@@ -128,16 +144,15 @@ body{
 }
 .btn--danger:hover{ filter: brightness(1.05); }
 
-/* ---------- STATUS ---------- */
+/* ---------- STATUS / DROPDOWN ---------- */
 .ok{ color: var(--ok); font-weight:700 }
 .warn{ color: var(--warn); font-weight:700 }
 
-.status{ position: relative; display: inline-block; }
 .status-btn{
   display:inline-flex; align-items:center; gap:8px;
   padding:10px 12px; border-radius:10px; font-weight:700;
   cursor:pointer; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.02); color:var(--text);
-  position: relative; z-index: 1;
+  position:relative; z-index:1;
 }
 .status-btn .caret{
   width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:6px solid currentColor;
@@ -146,9 +161,9 @@ body{
 .status--nao{ color: #ff9aa6; border-color: rgba(255,92,122,.45) !important; }
 
 .status-float{
-  position: fixed; top: 0; left: 0; display: none;
+  position:fixed; top:0; left:0; display:none;
   background:#0e1327; border:1px solid rgba(255,255,255,.12); border-radius:10px;
-  box-shadow: var(--shadow); z-index: 99999; overflow: hidden; min-width: 160px;
+  box-shadow: var(--shadow); z-index: 99999; overflow:hidden; min-width:160px;
 }
 .status-float.show{ display:block; }
 .status-item{
@@ -160,38 +175,28 @@ body{
 .status-item.pago{ color: var(--ok); }
 .status-item.nao { color: var(--danger); }
 
-/* ---------- ABAS (sem skeleton) ---------- */
+/* ---------- ABAS (sem skeleton, transição suave) ---------- */
 .tab{ display:none; }
 .tab.show{ display:block; }
 
-/* transição suave entre abas */
 .tab.tab-view{
-  opacity: 0;
+  opacity:0;
   transform: translateY(6px);
-  transition: opacity .22s cubic-bezier(.22,.61,.36,1), transform .22s cubic-bezier(.22,.61,.36,1);
+  transition: opacity .18s ease, transform .18s ease;
   will-change: opacity, transform;
 }
 .tab.tab-view.show{
-  opacity: 1;
+  opacity:1;
   transform: translateY(0);
 }
 .tab.tab-view.hiding{
-  opacity: 0;
+  opacity:0;
   transform: translateY(6px);
 }
 
-/* animação leve nas linhas quando a aba aparece */
-@keyframes rowIn{
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.tab.tab-view.show .table tbody tr{
-  animation: rowIn .18s ease both;
-}
-.tab.tab-view.show .table tbody tr:nth-child(2){ animation-delay:.015s }
-.tab.tab-view.show .table tbody tr:nth-child(3){ animation-delay:.03s }
-.tab.tab-view.show .table tbody tr:nth-child(4){ animation-delay:.045s }
-.tab.tab-view.show .table tbody tr:nth-child(5){ animation-delay:.06s }
+/* animação leve nas linhas quando a aba aparece (sem flicker) */
+@keyframes rowIn{ from{opacity:0;transform:translateY(2px)} to{opacity:1;transform:translateY(0)} }
+.tab.tab-view.show .table tbody tr{ animation: rowIn .12s ease both; }
 
 /* ---------- TOAST ---------- */
 .toast{
@@ -205,83 +210,10 @@ body{
   background: rgba(8, 12, 26, .65);
   backdrop-filter: blur(6px) saturate(.9);
 }
-@keyframes payModalIn {
-  from { transform: translateY(6px); opacity: 0; }
-  to   { transform: translateY(0);  opacity: 1; }
-}
+@keyframes payModalIn { from{ transform: translateY(6px); opacity:0 } to{ transform: translateY(0); opacity:1 } }
 #payModal[open]{ animation: payModalIn .16s ease-out; }
 #payModal > div{
   background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.05)) !important;
   border: 1px solid rgba(255,255,255,.22) !important;
   box-shadow: 0 30px 90px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.04) !important;
 }
-
-/* 1) reserva o espaço do scroll (nada de “pular”) */
-html, body, .table-wrap { scrollbar-gutter: stable both-edges; }
-
-/* 2) cabeçalho colado até os cantos do card e largura exata */
-.card .table-wrap { padding: 0; }            /* sem respiro lateral */
-.table { width: 100%; table-layout: fixed; } /* colunas firmes */
-.table thead th:first-child { border-top-left-radius: 12px; }
-.table thead th:last-child  { border-top-right-radius: 12px; text-align: left; }
-
-/* 3) animação suave das abas (sem skeleton) — garante o fade/slide */
-.tab.tab-view {
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity .22s ease, transform .22s ease;
-  will-change: opacity, transform;
-}
-.tab.tab-view.show { opacity: 1; transform: translateY(0); }
-
-.tab.tab-view.hiding{ opacity:0; transform: translateY(6px); }
-
-
-/* ===== Abas com transição simples (sem row-anim, sem skeleton) ===== */
-.tab { display:none; }
-.tab.show {
-  display:block;
-  opacity:1;
-  transform:none;
-}
-.tab.tab-view {
-  opacity:0;
-  transform: translateY(6px);
-  transition: opacity .18s ease, transform .18s ease;
-  will-change: opacity, transform;
-}
-.tab.tab-view.show {
-  opacity:1;
-  transform: translateY(0);
-}
-
-/* REMOVA qualquer bloco de “MICRO-ANIMAÇÃO NAS LINHAS” e qualquer .skel-* do CSS */
-
-/* ===== Cabeçalho da tabela cobrindo de fora a fora ===== */
-.card { overflow: hidden; }                   /* garante cantos perfeitos */
-.table { border-collapse: separate; border-spacing:0; }
-.table-wrap{
-  max-height: 460px;
-  overflow: auto;
-  overscroll-behavior: contain;
-  position: relative;
-  scrollbar-gutter: stable both-edges;        /* evita “salto” do layout */
-}
-
-/* O fundo azul escuro agora vai no THEAD inteiro, não nos TH isolados */
-.table thead{
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: #0d1330;                        /* azul do header */
-}
-.table thead th{
-  background: transparent;                    /* sem fundo por célula */
-  text-align:left; padding:14px; color:#cbd3ff; font-weight:700;
-  border-bottom:1px solid var(--line);
-}
-/* sem borda arredondada por célula — o .card já faz o “clip” certinho */
-
-/* mesma largura/comportamento para a coluna de Ações */
-.table thead th.col-acoes,
-.table tbody td.col-acoes { white-space: nowrap; width: 1%; }

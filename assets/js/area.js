@@ -1,9 +1,16 @@
 /* =========================================
-   area.js — Bancas & Pagamentos (via API) suave
+   area.js — Bancas & Pagamentos (suave e estável)
    - Render de aba único (sem piscar duas vezes)
    - Troca de abas com fade/slide (só CSS)
    - Cabeçalho e scroll estáveis
+   - Proteção contra init duplo (script repetido)
    ========================================= */
+
+/* ===== Guard: evita inicializar duas vezes ===== */
+if (window.__AREA_INIT__) {
+  console.warn('[area] já inicializado — ignorando carga duplicada');
+} else {
+window.__AREA_INIT__ = true;
 
 /* ========== Utils base ========== */
 const API = window.location.origin;
@@ -58,7 +65,7 @@ async function loadPagamentos() {
   return STATE.pagamentos;
 }
 
-/* ========== Renderers ========== */
+/* ========== Renderers (sem side-effects) ========== */
 function renderBancas(){
   const lista = STATE.bancas;
   tbodyBancas.innerHTML = lista.length ? lista.map(b => {
@@ -110,43 +117,35 @@ function renderPagamentos(){
   filtrarTabela(tbodyPags, buscaInput?.value || '');
 }
 
-/* ========== Troca de abas — sem re-render duplo ========== */
+/* ========== Visibilidade de abas (sem re-render duplo) ========== */
 function showOnly(tab){
   const showB = tab === 'bancas';
-  tabBancasEl.classList.toggle('show', showB);
   tabBancasEl.classList.add('tab-view');
-  tabPagamentosEl.classList.toggle('show', !showB);
   tabPagamentosEl.classList.add('tab-view');
+  tabBancasEl.classList.toggle('show', showB);
+  tabPagamentosEl.classList.toggle('show', !showB);
 }
+
 async function setTab(tab){
   if (TAB === tab) return;
-
   TAB = tab;
   localStorage.setItem('area_tab', tab);
-  qsa('.nav-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tab === tab);
-  });
+  qsa('.nav-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
 
-  // aplica efeito suave só no container da aba (CSS .tab-view)
-  tabBancasEl.classList.add('tab-view');
-  tabPagamentosEl.classList.add('tab-view');
+  // mostra a aba destino (ativa a transição do CSS)
+  showOnly(tab);
 
-  // mostra a aba destino primeiro (sem re-render ainda)
-  tabBancasEl.classList.toggle('show', tab === 'bancas');
-  tabPagamentosEl.classList.toggle('show', tab === 'pagamentos');
-
-  // carrega SOMENTE a lista da aba selecionada
+  // carrega e renderiza SOMENTE o conteúdo da aba atual
   if (tab === 'bancas') {
     await loadBancas();
+    renderBancas();
   } else {
     await loadPagamentos();
+    renderPagamentos();
   }
-
-  // renderiza uma única vez (evita “duas piscadas”)
-  render();
 }
 
-
+/* ========== Refresh da aba corrente (sem flicker) ========== */
 async function refresh(){
   if (TAB==='bancas'){ await loadBancas(); renderBancas(); }
   else { await loadPagamentos(); renderPagamentos(); }
@@ -156,6 +155,7 @@ function getBancaInputById(id){
   return document.querySelector(`input[data-role="banca"][data-id="${CSS.escape(id)}"]`);
 }
 
+/* ========== Ações ========== */
 async function toPagamento(id){
   const inp = getBancaInputById(id);
   if (inp) {
@@ -165,9 +165,11 @@ async function toPagamento(id){
     });
   }
   await apiFetch(`/api/bancas/${encodeURIComponent(id)}/to-pagamento`, { method:'POST' });
+
   // muda para a aba Pagamentos e atualiza só ela
   TAB = 'pagamentos';
   localStorage.setItem('area_tab', TAB);
+  qsa('.nav-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === TAB));
   showOnly('pagamentos');
   await loadPagamentos();
   renderPagamentos();
@@ -362,7 +364,7 @@ document.addEventListener('blur', async (e)=>{
   }catch(err){ console.error(err); }
 }, true);
 
-/* busca */
+/* busca (leve) */
 function filtrarTabela(tbody, q){
   if(!tbody) return;
   const query = (q||'').trim().toLowerCase();
@@ -378,11 +380,19 @@ buscaInput?.addEventListener('input', ()=>{
 
 /* ========== start ========== */
 document.addEventListener('DOMContentLoaded', async ()=>{
+  // aplica estado inicial do menu lateral
   qsa('.nav-btn').forEach(btn=> btn.classList.toggle('active', btn.dataset.tab === TAB));
-  showOnly(TAB);                // mostra só a aba atual
-  // pré-carrega as duas listas (sem re-render desnecessário)
+
+  // mostra só a aba atual (habilita CSS de transição)
+  showOnly(TAB);
+
+  // pré-carrega as DUAS listas em paralelo (sem re-render)
   await Promise.allSettled([loadBancas(), loadPagamentos()]);
-  // renderiza só a aba atual para evitar “duas piscadas”
+
+  // renderiza apenas a aba visível (nada de “duas piscadas”)
   if (TAB==='bancas') renderBancas(); else renderPagamentos();
+
   setupAutoDeleteTimers();
 });
+
+} // fim guard
