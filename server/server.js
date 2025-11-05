@@ -108,7 +108,6 @@ async function getAccessToken() {
 }
 
 function brlStrToCents(strOriginal) {
-  // Efi manda "10.00" como string; convertemos para cents com arredondamento
   const n = Number.parseFloat(String(strOriginal).replace(',', '.'));
   if (Number.isNaN(n)) return null;
   return Math.round(n * 100);
@@ -126,6 +125,7 @@ app.use(helmet({
 app.use(express.json());
 app.use(cookieParser());
 
+// CORS (se front e back no mesmo domínio, OK; se outro domínio, ajuste ORIGIN)
 app.use(cors({ origin: ORIGIN, credentials: true }));
 
 // Servir estáticos (site completo)
@@ -197,14 +197,12 @@ app.get('/api/stream', requireAuth, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
-  // CORS c/ credenciais (se front/back em domínios diferentes)
   res.setHeader('Access-Control-Allow-Origin', ORIGIN);
   res.setHeader('Access-Control-Allow-Credentials', 'true');
 
   res.flushHeaders?.();
   sseClients.add(res);
 
-  // keepalive
   const ping = setInterval(() => {
     try { res.write(`event: ping\ndata: {}\n\n`); } catch {}
   }, 25000);
@@ -270,10 +268,11 @@ app.get('/api/pix/ping', async (req, res) => {
 });
 
 // ===== API PIX (Efi) =====
+// PRIVACIDADE: não enviamos CPF do pagador; somente nome (opcional) e valor.
 app.post('/api/pix/cob', async (req, res) => {
   try {
-    const { nome, cpf, valorCentavos } = req.body || {};
-    if (!nome || !valorCentavos || valorCentavos < 1000) {
+    const { nome, valorCentavos } = req.body || {};
+    if (!valorCentavos || valorCentavos < 1000) {
       return res.status(400).json({ error: 'Dados inválidos (mínimo R$ 10,00)' });
     }
     const token = await getAccessToken();
@@ -281,10 +280,11 @@ app.post('/api/pix/cob', async (req, res) => {
 
     const payload = {
       calendario: { expiracao: 3600 },
-      devedor: cpf ? { cpf: (cpf||'').replace(/\D/g,''), nome } : { nome },
+      // ⚠️ Sem "cpf" do devedor — apenas nome (se enviado).
+      devedor: nome ? { nome } : undefined,
       valor: { original: valor },
       chave: EFI_PIX_KEY,
-      infoAdicionais: [{ nome: 'Nome', valor: nome }]
+      infoAdicionais: nome ? [{ nome: 'Nome', valor: nome }] : undefined
     };
 
     const { data: cob } = await axios.post(
@@ -301,6 +301,8 @@ app.post('/api/pix/cob', async (req, res) => {
 
     const emv = qr.qrcode;
     const qrPng = qr.imagemQrcode || (await QRCode.toDataURL(emv));
+
+    // Resposta minimalista (não ecoa dados enviados)
     res.json({ txid, emv, qrPng });
   } catch (err) {
     console.error('Erro /api/pix/cob:', err.response?.data || err.message);
@@ -326,7 +328,7 @@ app.get('/api/pix/status/:txid', async (req, res) => {
    PUBLIC/SEGURO — confirmar pagamento por TXID
    - Requer header X-APP-KEY igual a APP_PUBLIC_KEY
    - Valida na Efi: status = "CONCLUIDA" e valor bate
-   - Grava em "bancas"
+   - Grava em "bancas" (mantendo o NOME)
    ========================================================= */
 app.post('/api/pix/confirmar', async (req, res) => {
   try{
@@ -335,7 +337,7 @@ app.post('/api/pix/confirmar', async (req, res) => {
     if (!key || key !== APP_PUBLIC_KEY) return res.status(401).json({ error:'unauthorized' });
 
     const { txid, nome, valorCentavos, tipo=null, chave=null } = req.body || {};
-    if (!txid || !nome || typeof valorCentavos !== 'number' || valorCentavos < 1) {
+    if (!txid || typeof valorCentavos !== 'number' || valorCentavos < 1) {
       return res.status(400).json({ error:'dados_invalidos' });
     }
 
@@ -358,7 +360,7 @@ app.post('/api/pix/confirmar', async (req, res) => {
       return res.status(409).json({ error:'valor_divergente' });
     }
 
-    // 3) insere em bancas
+    // 3) insere em bancas — mantém o NOME
     const id = uid(); // pode usar o próprio txid, se preferir
     const { rows } = await q(
       `insert into bancas (id, nome, deposito_cents, banca_cents, pix_type, pix_key, created_at)
@@ -367,15 +369,15 @@ app.post('/api/pix/confirmar', async (req, res) => {
                  deposito_cents as "depositoCents",
                  banca_cents    as "bancaCents",
                  pix_type       as "pixType",
-                 pix_key        as "pixKey",
+                 pix_key        as "PixKey",
                  created_at     as "createdAt"`,
-      [id, nome, valorCentavos, null, tipo, chave]
+      [id, (nome||'').toString().slice(0,120), valorCentavos, null, tipo, chave]
     );
 
-    // broadcast p/ quem está na Área
     sseSendAll('bancas-changed', { reason: 'insert-confirmed' });
 
-    return res.json({ ok:true, ...rows[0] });
+    // resposta minimalista
+    return res.json({ ok:true, id: rows[0].id });
   }catch(e){
     console.error('pix/confirmar:', e.response?.data || e.message);
     return res.status(500).json({ error:'falha_confirmar' });
@@ -393,22 +395,21 @@ app.post('/api/public/bancas', async (req, res) => {
     if (!key || key !== APP_PUBLIC_KEY) return res.status(401).json({ error:'unauthorized' });
 
     const { nome, depositoCents, pixType=null, pixKey=null } = req.body || {};
-    if (!nome || typeof depositoCents !== 'number' || depositoCents <= 0) {
+    if (typeof depositoCents !== 'number' || depositoCents <= 0) {
       return res.status(400).json({ error: 'dados_invalidos' });
     }
 
     const id = uid();
-    const { rows } = await q(
+    await q(
       `insert into bancas (id, nome, deposito_cents, banca_cents, pix_type, pix_key, created_at)
-       values ($1,$2,$3,$4,$5,$6, now())
-       returning id, nome, deposito_cents as "depositoCents", banca_cents as "bancaCents",
-                 pix_type as "pixType", pix_key as "pixKey", created_at as "createdAt"`,
-      [id, nome, depositoCents, null, pixType, pixKey]
+       values ($1,$2,$3,$4,$5,$6, now())`,
+      [id, (nome||'').toString().slice(0,120), depositoCents, null, pixType, pixKey]
     );
 
     sseSendAll('bancas-changed', { reason: 'insert-public' });
 
-    return res.json(rows[0]);
+    // resposta minimalista
+    return res.json({ ok:true, id });
   }catch(e){
     console.error('public/bancas:', e.message);
     return res.status(500).json({ error:'falha_public' });
@@ -437,7 +438,7 @@ app.get('/api/bancas', areaAuth, async (req, res) => {
 
 app.post('/api/bancas', areaAuth, async (req, res) => {
   const { nome, depositoCents, pixType=null, pixKey=null } = req.body || {};
-  if (!nome || typeof depositoCents !== 'number' || depositoCents <= 0) {
+  if (typeof depositoCents !== 'number' || depositoCents <= 0) {
     return res.status(400).json({ error: 'dados_invalidos' });
   }
   const id = uid();
@@ -446,7 +447,7 @@ app.post('/api/bancas', areaAuth, async (req, res) => {
      values ($1,$2,$3,$4,$5,$6, now())
      returning id, nome, deposito_cents as "depositoCents", banca_cents as "bancaCents",
                pix_type as "pixType", pix_key as "pixKey", created_at as "createdAt"`,
-    [id, nome, depositoCents, null, pixType, pixKey]
+    [id, (nome||'').toString().slice(0,120), depositoCents, null, pixType, pixKey]
   );
 
   sseSendAll('bancas-changed', { reason: 'insert' });
@@ -560,7 +561,7 @@ app.patch('/api/pagamentos/:id', areaAuth, async (req, res) => {
                pagamento_cents as "pagamentoCents",
                pix_type as "pixType",
                pix_key  as "pixKey",
-               status, created_at as "createdAt", paid_at as "paidAt"`,
+               status, created_at as "CreatedAt", paid_at as "PaidAt"`,
     [req.params.id, status]
   );
   if (!rows.length) return res.status(404).json({ error:'not_found' });

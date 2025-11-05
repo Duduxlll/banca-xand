@@ -8,10 +8,7 @@
   <!-- 1) Chave pública: deve ser IGUAL à APP_PUBLIC_KEY do servidor -->
   <meta name="app-key" content="b01c7cd2e87519f8d0e62fafc69c80f8babb54d0a9799fefdad28d4520e7d25bd39f140cb948041e5c5caa43e7d7f905">
 
-  <!-- Estilo: você pode manter inline ou separar em assets/css/style.css -->
- 
-<link rel="stylesheet" href="assets/css/style.css">
-  <!-- 2) (Opcional) já deixar o CSS do modal QR carregado -->
+  <link rel="stylesheet" href="assets/css/style.css">
   <link rel="stylesheet" href="assets/css/pix.css">
 </head>
 <body>
@@ -41,13 +38,8 @@
         </div>
         <div class="card-body">
           <form id="depositoForm" novalidate>
+            <!-- Linha 1: só o Nome -->
             <div class="row">
-              <div>
-                <label for="cpf">CPF</label>
-                <input class="input" type="text" inputmode="numeric" autocomplete="off" id="cpf" name="cpf" placeholder="000.000.000-00" maxlength="14" required>
-                <p class="help">Usado também como chave quando você escolher "CPF".</p>
-                <div class="error" id="cpfError">Informe um CPF válido.</div>
-              </div>
               <div>
                 <label for="nome">Nome completo</label>
                 <input class="input" type="text" id="nome" name="nome" placeholder="Seu nome" required>
@@ -55,17 +47,27 @@
               </div>
             </div>
 
+            <!-- Linha 2: Tipo de chave + Campo dinâmico (CPF OU Chave) -->
             <div class="row" style="margin-top:16px">
               <div>
                 <label for="tipoChave">Tipo de chave PIX</label>
                 <select class="input" id="tipoChave" name="tipoChave" required>
-                  <option value="cpf">CPF</option>
+                  <option value="cpf" selected>CPF</option>
                   <option value="aleatoria">Chave aleatória</option>
                   <option value="telefone">Número de telefone</option>
                   <option value="email">E-mail</option>
                 </select>
-                <p class="help">Se escolher CPF, nenhuma outra informação é necessária.</p>
+                <p class="help">Informe a chave conforme o tipo escolhido. Se for CPF, digite o CPF como chave.</p>
               </div>
+
+              <!-- QUANDO tipo = CPF: este aparece -->
+              <div id="cpfWrapper">
+                <label for="cpf">Informe seu CPF</label>
+                <input class="input" type="text" inputmode="numeric" autocomplete="off" id="cpf" name="cpf" placeholder="000.000.000-00" maxlength="14">
+                <div class="error" id="cpfError">Informe um CPF válido.</div>
+              </div>
+
+              <!-- QUANDO tipo ≠ CPF: este aparece -->
               <div id="chaveWrapper" style="display:none">
                 <label for="chavePix">Informe sua chave PIX</label>
                 <input class="input" type="text" id="chavePix" name="chavePix" placeholder="Cole aqui sua chave" autocomplete="off">
@@ -93,10 +95,10 @@
           <div class="card-body">
             <h3 style="margin-top:0">Resumo</h3>
             <ul class="summary-list" id="resumo">
-              <li><span class="k">CPF</span> <span id="r-cpf">—</span></li>
+              <!-- CPF removido do resumo -->
               <li><span class="k">Nome</span> <span id="r-nome">—</span></li>
               <li><span class="k">Tipo de chave</span> <span id="r-tipo">CPF</span></li>
-              <li id="r-chave-li" style="display:none"><span class="k">Chave</span> <span id="r-chave">—</span></li>
+              <li id="r-chave-li"><span class="k">Chave</span> <span id="r-chave">—</span></li>
               <li><span class="k">Valor</span> <span id="r-valor">—</span></li>
             </ul>
           </div>
@@ -106,10 +108,10 @@
           <div class="card-body">
             <h3 style="margin-top:0">Como funciona</h3>
             <ol style="margin:0 0 0 18px; color:var(--muted); line-height:1.6">
-              <li>Você informa seu CPF e seu nome.</li>
-              <li>Escolhe o tipo de chave PIX (CPF, aleatória, telefone ou e-mail).</li>
-              <li>Define o valor (mínimo R$ 10,00) e clica em <strong>Fazer depósito</strong>.</li>
-              <li>O QR-Code do PIX abre e, após o pagamento <em>CONCLUÍDO</em>, o registro vai para a Área.</li>
+              <li>Informe seu <strong>nome completo</strong>.</li>
+              <li>Escolha o <strong>tipo de chave PIX</strong> (CPF, aleatória, telefone ou e-mail).</li>
+              <li>Digite a <strong>chave</strong> conforme o tipo escolhido (se for CPF, digite o CPF).</li>
+              <li>Defina o <strong>valor</strong> (mínimo R$ 10,00) e clique em <strong>Fazer depósito</strong>.</li>
             </ol>
           </div>
         </section>
@@ -121,10 +123,70 @@
     </footer>
   </main>
 
-  <!-- TOAST -->
   <div class="toast" id="toast"></div>
 
-  <!-- 3) Usa o app.js que faz TODO o fluxo do PIX -->
+  <!-- Script curtinho só para alternar os campos CPF/Chave sem quebrar seu app.js -->
+  <script>
+    (function(){
+      const ano = document.querySelector('#ano'); if(ano) ano.textContent = new Date().getFullYear();
+
+      const tipo = document.querySelector('#tipoChave');
+      const cpfWrap = document.querySelector('#cpfWrapper');
+      const chaveWrap = document.querySelector('#chaveWrapper');
+      const chaveInput = document.querySelector('#chavePix');
+      const cpfInput = document.querySelector('#cpf');
+      const rTipo = document.querySelector('#r-tipo');
+      const rChave = document.querySelector('#r-chave');
+
+      function maskCPF(v){
+        v = String(v||'').replace(/\D/g,'').slice(0,11);
+        v = v.replace(/(\d{3})(\d)/,'$1.$2')
+             .replace(/(\d{3})(\d)/,'$1.$2')
+             .replace(/(\d{3})(\d{1,2})$/,'$1-$2');
+        return v;
+      }
+
+      function updateUI(){
+        const t = tipo.value;
+        rTipo.textContent = t === 'aleatoria' ? 'Chave aleatória' : (t.charAt(0).toUpperCase()+t.slice(1));
+        if(t === 'cpf'){
+          cpfWrap.style.display = '';
+          chaveWrap.style.display = 'none';
+          // espelha no resumo
+          cpfInput.value = maskCPF(cpfInput.value);
+          rChave.textContent = cpfInput.value || '—';
+        }else{
+          cpfWrap.style.display = 'none';
+          chaveWrap.style.display = '';
+          // placeholder adequado
+          chaveInput.placeholder = t === 'telefone' ? '(00) 90000-0000' : (t === 'email' ? 'seu@email.com' : 'Ex.: 2e1a-…)');
+          rChave.textContent = (chaveInput.value || '').trim() || '—';
+        }
+      }
+
+      // máscaras/espelhamento simples
+      document.addEventListener('input', (e)=>{
+        if(e.target.id === 'cpf'){
+          e.target.value = maskCPF(e.target.value);
+          if(tipo.value === 'cpf') rChave.textContent = e.target.value || '—';
+        }
+        if(e.target.id === 'chavePix'){
+          if(tipo.value === 'telefone'){
+            let v = e.target.value.replace(/\D/g,'').slice(0,11);
+            if(v.length > 2) v = `(${v.slice(0,2)}) ${v.slice(2)}`;
+            if(v.length > 10) v = `${v.slice(0,10)}-${v.slice(10)}`;
+            e.target.value = v;
+          }
+          if(tipo.value !== 'cpf') rChave.textContent = e.target.value.trim() || '—';
+        }
+      });
+
+      tipo.addEventListener('change', updateUI);
+      updateUI(); // estado inicial
+    })();
+  </script>
+
+  <!-- Seu fluxo principal do PIX -->
   <script src="assets/js/app.js"></script>
 </body>
 </html>

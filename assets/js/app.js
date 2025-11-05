@@ -1,9 +1,10 @@
-/* =========================================
-   Depósito PIX – front (produção)
+/* ========================================= 
+   Depósito PIX – front (produção, privacidade)
    - Cria modal do QR por JS
-   - Chama backend Efi (/api/pix/cob e /api/pix/status/:txid)
-   - Ao confirmar: registra no servidor (/api/pix/confirmar)
-     e cai para localStorage se o servidor rejeitar
+   - Chama backend Efi (/api/pix/cob) sem CPF
+   - Faz polling de status (/api/pix/status/:txid)
+   - Ao concluir: confirma e registra (/api/pix/confirmar)
+   - Minimiza dados expostos nas requests/respostas
    ========================================= */
 
 const API = window.location.origin;
@@ -45,33 +46,40 @@ function getMeta(name){
 }
 
 /* ===== Persistência ===== */
-// Salva UNIVERSAL no servidor validando o TXID (rota pública segura)
+// Salva no servidor validando o TXID (rota pública segura, sem vazar dados)
 async function saveOnServerConfirmado({ txid, nome, valorCentavos, tipo, chave }){
-  const APP_KEY = window.APP_PUBLIC_KEY || getMeta('app-key') || '';
+  const APP_KEY = getMeta('app-key') || '';
   const res = await fetch(`${API}/api/pix/confirmar`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(APP_KEY ? { 'X-APP-KEY': APP_KEY } : {})
     },
-    body: JSON.stringify({ txid, nome, valorCentavos, tipo, chave })
+    body: JSON.stringify({
+      txid,
+      nome: (nome||'').toString().slice(0,120),
+      valorCentavos,
+      // tipo/chave são opcionais; só enviamos se existirem:
+      ...(tipo ? { tipo } : {}),
+      ...(chave ? { chave } : {})
+    })
   });
   if (!res.ok) {
     let msg = `Falha ao confirmar (${res.status})`;
     try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
     throw new Error(msg);
   }
-  return res.json();
+  return res.json(); // { ok:true, id }
 }
 
 // Fallback local (visível só neste navegador)
 function saveLocal({ nome, valorCentavos, tipo, chave }){
   const registro = {
     id: Date.now().toString(),
-    nome,
+    nome: (nome||'').toString().slice(0,120),
     depositoCents: valorCentavos,
-    pixType: tipo,
-    pixKey:  chave,
+    pixType: tipo || null,
+    pixKey:  chave || null,
     createdAt: new Date().toISOString()
   };
   const bancas = JSON.parse(localStorage.getItem('bancas') || '[]');
@@ -225,36 +233,46 @@ function ensurePixModal(){
 }
 
 /* ===== Backend Efi ===== */
-async function criarCobrancaPIX({ nome, cpf, valorCentavos }){
+// ⚠️ PRIVACIDADE: não enviamos CPF para o backend.
+// Somente nome (opcional) e valor.
+async function criarCobrancaPIX({ nome, valorCentavos }){
   const resp = await fetch(`${API}/api/pix/cob`, {
     method:'POST',
     headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ nome, cpf, valorCentavos })
+    body: JSON.stringify({
+      // nome é opcional no servidor, mas enviamos se o usuário preencheu
+      ...(nome ? { nome } : {}),
+      valorCentavos
+    })
   });
   if(!resp.ok){
     let err = 'Falha ao criar PIX';
     try{ const j = await resp.json(); if(j.error) err = j.error; }catch{}
     throw new Error(err);
   }
-  return resp.json(); // { txid, emv, qrPng }
+  // resposta já é minimalista: { txid, emv, qrPng }
+  return resp.json();
 }
 
 /* ===== Submit ===== */
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
 
-  const cpfOk   = isCPFValid(cpfInput.value);
-  const nomeOk  = nomeInput.value.trim().length > 2;
   const tipo    = tipoSelect.value;
+  // CPF só é obrigatório quando o tipo escolhido é CPF
+  const cpfObrigatorio = (tipo === 'cpf');
+  const cpfOk   = cpfObrigatorio ? isCPFValid(cpfInput.value) : true;
+  const nomeOk  = nomeInput.value.trim().length > 2;
+
   let chaveOk   = true;
   if (tipo !== 'cpf'){
-    const v = chaveInput.value.trim();
+    const v = (chaveInput.value || '').trim();
     if (tipo === 'email')         chaveOk = isEmail(v);
     else if (tipo === 'telefone') chaveOk = v.replace(/\D/g,'').length === 11;
     else                          chaveOk = v.length >= 10; // aleatória
   }
   const valorCentavos = toCentsMasked(valorInput.value);
-  const valorOk       = valorCentavos >= 1000; // R$10,00
+  const valorOk       = valorCentavos >= 1000; // R$ 10,00
 
   showError('#cpfError',  cpfOk);
   showError('#nomeError', nomeOk);
@@ -266,20 +284,15 @@ form.addEventListener('submit', async (e) => {
     return;
   }
 
-  const dados = {
-    nome:  nomeInput.value.trim(),
-    cpf:   cpfInput.value,
-    tipo:  tipoSelect.value,
-    chave: (tipoSelect.value === 'cpf' ? cpfInput.value : (chaveInput.value || '').trim()),
-    valorCentavos
-  };
+  const nome  = nomeInput.value.trim();
+  const chave = (tipo === 'cpf' ? cpfInput.value : (chaveInput.value || '').trim());
 
   try{
     btnSubmit && (btnSubmit.disabled = true);
 
-    // 1) criar a cobrança
+    // 1) criar a cobrança sem enviar CPF
     const { txid, emv, qrPng } = await criarCobrancaPIX({
-      nome: dados.nome, cpf: dados.cpf, valorCentavos: dados.valorCentavos
+      nome, valorCentavos
     });
 
     // 2) abrir modal com QR
@@ -307,23 +320,19 @@ form.addEventListener('submit', async (e) => {
           clearInterval(timer);
           st.textContent = 'Pagamento confirmado! ✅';
 
-          // 4) registra no servidor com validação de TXID (universal)
+          // 4) registra no servidor com validação de TXID
           try{
             await saveOnServerConfirmado({
               txid,
-              nome: dados.nome,
-              valorCentavos: dados.valorCentavos,
-              tipo: dados.tipo,
-              chave: dados.chave
+              nome,
+              valorCentavos,
+              // tipo/chave apenas se existirem:
+              ...(tipo ? { tipo } : {}),
+              ...(chave ? { chave } : {})
             });
           }catch(_err){
-            // fallback local se o servidor recusar (não recomendado para produção)
-            saveLocal({
-              nome: dados.nome,
-              valorCentavos: dados.valorCentavos,
-              tipo: dados.tipo,
-              chave: dados.chave
-            });
+            // Fallback local (não recomendado p/ produção)
+            saveLocal({ nome, valorCentavos, tipo, chave });
             notify('Servidor não confirmou o registro — salvo localmente.', true, 4200);
           }
 
@@ -336,12 +345,11 @@ form.addEventListener('submit', async (e) => {
           st.textContent = 'Tempo esgotado. Se já pagou, a confirmação aparecerá na Área.';
         }
       }catch(loopErr){
-        console.error(loopErr);
+        // silencioso p/ não vazar dados no console
       }
     }, 5000);
 
   }catch(e){
-    console.error(e);
     notify('Não foi possível iniciar o PIX. Tente novamente.', true);
   } finally {
     btnSubmit && (btnSubmit.disabled = false);
