@@ -29,14 +29,14 @@ const { Pool } = pkg;
 
    APP_PUBLIC_KEY=<chave-publica-pro-front>
 
-   # >>> Se for usar LivePix <<<
+   # >>> LivePix <<<
    PIX_PROVIDER=livepix
    LIVEPIX_CLIENT_ID=...
    LIVEPIX_CLIENT_SECRET=...
-   LIVEPIX_API_BASE=https://api.livepix.gg        # confirme no painel/doc
-   LIVEPIX_REDIRECT_URL=https://seu-app.onrender.com/obrigado   # opcional (UX)
-   LIVEPIX_WEBHOOK_SECRET=<segredo-usado-para-assinar-webhooks> # se houver
-   LIVEPIX_WEBHOOK_ALLOWLIST=                          # opcional: IPs separados por vírgula (se o serviço publicar)
+   LIVEPIX_API_BASE=https://api.livepix.gg           # confirme no painel
+   LIVEPIX_REDIRECT_URL=                             # opcional
+   LIVEPIX_WEBHOOK_SECRET=<seu-segredo-do-webhook>   # gerado por você
+   LIVEPIX_WEBHOOK_ALLOWLIST=                        # opcional: "1.2.3.4,5.6.7.8"
 
    # Postgres (Render)
    DATABASE_URL=postgres://usuario:senha@host:5432/db
@@ -53,10 +53,8 @@ const {
 
   APP_PUBLIC_KEY,
 
-  // Provedor
   PIX_PROVIDER = 'livepix',
 
-  // LivePix
   LIVEPIX_CLIENT_ID,
   LIVEPIX_CLIENT_SECRET,
   LIVEPIX_API_BASE,
@@ -64,7 +62,6 @@ const {
   LIVEPIX_WEBHOOK_SECRET,
   LIVEPIX_WEBHOOK_ALLOWLIST,
 
-  // Postgres
   DATABASE_URL
 } = process.env;
 
@@ -77,12 +74,9 @@ const PROD = process.env.NODE_ENV === 'production';
 if (!DATABASE_URL) { console.error('❌ Falta DATABASE_URL no .env'); process.exit(1); }
 
 // ===== valida LivePix quando ativo =====
-if ((PIX_PROVIDER||'').toLowerCase() === 'livepix') {
-  [
-    'LIVEPIX_CLIENT_ID',
-    'LIVEPIX_CLIENT_SECRET',
-    'LIVEPIX_API_BASE'
-  ].forEach(k=>{
+const isLivePix = (PIX_PROVIDER||'').toLowerCase() === 'livepix';
+if (isLivePix) {
+  ['LIVEPIX_CLIENT_ID','LIVEPIX_CLIENT_SECRET','LIVEPIX_API_BASE'].forEach(k=>{
     if(!process.env[k]) { console.error(`❌ Falta ${k} no .env (LivePix)`); process.exit(1); }
   });
 }
@@ -102,6 +96,12 @@ const q = (text, params) => pool.query(text, params);
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function tok(){ return 'tok_' + crypto.randomBytes(18).toString('hex'); }
 
+function timingSafeEq(a,b){
+  const ba = Buffer.from(String(a)||''); const bb = Buffer.from(String(b)||'');
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+
 // token -> providerPaymentId (TTL 30 min)
 const tokenStore = new Map();
 const TOKEN_TTL_MS = 30 * 60 * 1000;
@@ -114,10 +114,22 @@ setInterval(()=> {
 const app = express();
 app.set('trust proxy', 1);
 
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
-}));
-app.use(express.json({ type: ['application/json','application/*+json'] }));
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+
+// capturar RAW body para validar HMAC do webhook
+app.use((req, res, next) => {
+  let data = [];
+  req.on('data', chunk => data.push(chunk));
+  req.on('end', () => {
+    const raw = Buffer.concat(data);
+    req.rawBody = raw;
+    // tenta parsear JSON — para rotas comuns
+    try { req.body = raw.length ? JSON.parse(raw.toString('utf8')) : {}; }
+    catch { req.body = {}; }
+    next();
+  });
+});
+
 app.use(cookieParser());
 app.use(cors({ origin: ORIGIN, credentials: true }));
 app.use(express.static(ROOT, { extensions: ['html'] }));
@@ -202,19 +214,13 @@ app.get('/health', async (req,res)=>{
 
 /* =========================================================
    ADAPTER DO PROVEDOR PIX — LivePix
-   ---------------------------------------------------------
-   Atenção: os endpoints exatos podem ter nomes diferentes.
-   Preencha conforme a documentação do LivePix.
+   (confirme as rotas/nomes de campos na doc oficial)
    ========================================================= */
-const isLivePix = (PIX_PROVIDER||'').toLowerCase() === 'livepix';
 
-// 1) obter access token (se a API do LivePix usar OAuth2 client_credentials)
+// 1) Access token (ex.: OAuth2 client_credentials)
 async function livepixGetAccessToken(){
-  // CONFIRA a rota de OAuth do LivePix. Exemplo comum:
-  // POST {LIVEPIX_API_BASE}/oauth/token
-  // body: grant_type=client_credentials
-  // auth basic: client_id / client_secret
-  const url = `${LIVEPIX_API_BASE.replace(/\/+$/,'')}/oauth/token`;
+  const base = LIVEPIX_API_BASE.replace(/\/+$/,'');
+  const url = `${base}/oauth/token`; // CONFIRMAR NA DOC
   const resp = await axios.post(
     url,
     new URLSearchParams({ grant_type:'client_credentials' }).toString(),
@@ -223,73 +229,81 @@ async function livepixGetAccessToken(){
       auth: { username: LIVEPIX_CLIENT_ID, password: LIVEPIX_CLIENT_SECRET }
     }
   );
-  return resp.data.access_token; // confirme o campo na doc
+  return resp.data.access_token; // confirme o campo
 }
 
-// 2) criar pagamento/checkout no LivePix
+// 2) Criar pagamento/checkout
 async function livepixCreatePayment({ nome, valorCentavos, tipo, chave }){
   const access = await livepixGetAccessToken();
+  const base = LIVEPIX_API_BASE.replace(/\/+$/,'');
+  const url  = `${base}/v1/payments`; // CONFIRMAR NA DOC
 
-  // Monte o corpo conforme a doc do LivePix.
-  // A ideia: enviar valor, payer name e METADATA com (tipo,chave)
   const body = {
     amount: (valorCentavos/100).toFixed(2), // "10.00"
     currency: 'BRL',
     payer_name: nome,
-    // Se o LivePix permitir descrição/mensagem padrão, você pode compor aqui.
     description: 'Depósito via site',
-    metadata: { tipo, chave },                 // <- volta no webhook
-    // Se a API aceitar URLs de retorno/cancelamento:
+    metadata: { tipo, chave }, // volta no webhook
     success_url: LIVEPIX_REDIRECT_URL || undefined,
     cancel_url: LIVEPIX_REDIRECT_URL || undefined
   };
 
-  const url = `${LIVEPIX_API_BASE.replace(/\/+$/,'')}/v1/payments`; // CONFIRMAR rota
   const { data } = await axios.post(url, body, {
     headers:{ Authorization:`Bearer ${access}`, 'Content-Type':'application/json' }
   });
 
-  // Ajuste os campos conforme a resposta real do LivePix:
   return {
-    providerPaymentId: data.id,             // id do pagamento/checkout
-    redirectUrl: data.checkout_url || data.url // URL para onde vamos redirecionar o usuário
+    providerPaymentId: data.id,
+    redirectUrl: data.checkout_url || data.url
   };
 }
 
-// 3) consultar status (opcional — geralmente webhook resolve)
+// 3) Consultar status (opcional — webhook é a verdade)
 async function livepixGetPaymentStatus(providerPaymentId){
   const access = await livepixGetAccessToken();
-  const url = `${LIVEPIX_API_BASE.replace(/\/+$/,'')}/v1/payments/${encodeURIComponent(providerPaymentId)}`; // CONFIRMAR rota
+  const base = LIVEPIX_API_BASE.replace(/\/+$/,'');
+  const url  = `${base}/v1/payments/${encodeURIComponent(providerPaymentId)}`; // CONFIRMAR NA DOC
   const { data } = await axios.get(url, { headers:{ Authorization:`Bearer ${access}` } });
-  // Normalize para 'CONCLUIDA' / 'pendente'
   const paid = (data.status === 'paid' || data.status === 'succeeded' || data.paid === true);
   return paid ? 'CONCLUIDA' : 'PENDENTE';
 }
 
 /* =========================================================
-   PIX — criar "cobrança"
-   Com LivePix, devolvemos URL de checkout para redirecionar.
-   Não mandamos txid para o navegador; usamos token opaco.
+   ROTAS PIX/LivePix
    ========================================================= */
-app.post('/api/pix/cob', async (req, res) => {
+
+// (Novo) endpoint que teu front estava chamando
+app.post('/api/livepix/create', async (req, res) => {
   try {
+    if (!isLivePix) return res.status(400).json({ error: 'provider_mismatch' });
     const { nome, valorCentavos, tipo=null, chave=null } = req.body || {};
     if (!nome || !valorCentavos || valorCentavos < 1000) {
       return res.status(400).json({ error: 'Dados inválidos (mínimo R$ 10,00)' });
     }
-    if (!isLivePix) {
-      return res.status(400).json({ error: 'Provedor PIX configurado é LivePix. Ajuste o front para redirecionar.' });
-    }
 
-    // Cria o pagamento/checkout no LivePix (com metadata tipo/chave)
     const { providerPaymentId, redirectUrl } = await livepixCreatePayment({ nome, valorCentavos, tipo, chave });
 
-    // Gera token opaco (front nunca sabe o id real do provedor)
     const tokenOpaque = tok();
     tokenStore.set(tokenOpaque, { providerPaymentId, createdAt: Date.now() });
 
-    // Com LivePix o usuário deve ser levado ao redirectUrl
-    // (lá ele poderá escrever a mensagem e finalizar)
+    return res.json({ token: tokenOpaque, redirectUrl });
+  } catch (err) {
+    console.error('Erro /api/livepix/create:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Falha ao iniciar pagamento' });
+  }
+});
+
+// Compat: se teu front ainda bater em /api/pix/cob, responde igual
+app.post('/api/pix/cob', async (req, res) => {
+  try {
+    if (!isLivePix) return res.status(400).json({ error: 'provider_mismatch' });
+    const { nome, valorCentavos, tipo=null, chave=null } = req.body || {};
+    if (!nome || !valorCentavos || valorCentavos < 1000) {
+      return res.status(400).json({ error: 'Dados inválidos (mínimo R$ 10,00)' });
+    }
+    const { providerPaymentId, redirectUrl } = await livepixCreatePayment({ nome, valorCentavos, tipo, chave });
+    const tokenOpaque = tok();
+    tokenStore.set(tokenOpaque, { providerPaymentId, createdAt: Date.now() });
     return res.json({ token: tokenOpaque, redirectUrl });
   } catch (err) {
     console.error('Erro /api/pix/cob:', err.response?.data || err.message);
@@ -297,10 +311,7 @@ app.post('/api/pix/cob', async (req, res) => {
   }
 });
 
-/* =========================================================
-   PIX — status por token (opcional, se quiser manter polling)
-   Com LivePix, o certo é confiar no webhook. Mantive para testes.
-   ========================================================= */
+// (Opcional) polling por token
 app.get('/api/pix/status/:token', async (req, res) => {
   try {
     if (!isLivePix) return res.status(400).json({ error:'apenas_livepix' });
@@ -316,19 +327,10 @@ app.get('/api/pix/status/:token', async (req, res) => {
 
 /* =========================================================
    WEBHOOK LivePix — verdade do pagamento
-   - Configure esta URL no painel do LivePix como "URL de notificações"
-   - Valide a assinatura, se o serviço enviar (ex.: HMAC em header)
-   - Quando status pago: insere em "bancas" usando METADATA (tipo/chave)
    ========================================================= */
-function timingSafeEq(a,b){
-  const ba = Buffer.from(String(a)||''); const bb = Buffer.from(String(b)||'');
-  if (ba.length !== bb.length) return false;
-  return crypto.timingSafeEqual(ba, bb);
-}
-
 app.post('/api/livepix/webhook', async (req, res) => {
   try {
-    // (Opcional) restrição por IP
+    // (Opcional) allowlist de IP
     if (LIVEPIX_WEBHOOK_ALLOWLIST) {
       const allow = LIVEPIX_WEBHOOK_ALLOWLIST.split(',').map(s=>s.trim()).filter(Boolean);
       const ip = (req.headers['x-forwarded-for']||'').split(',')[0].trim() || req.socket.remoteAddress || '';
@@ -337,34 +339,28 @@ app.post('/api/livepix/webhook', async (req, res) => {
       }
     }
 
-    // (Opcional) verificação de assinatura (confirme header na doc)
+    // (Opcional) assinatura HMAC (use RAW body)
     if (LIVEPIX_WEBHOOK_SECRET) {
-      const raw = JSON.stringify(req.body);
-      // Exemplo genérico de HMAC-SHA256; ajuste o header/nome conforme a doc:
       const signature = req.get('X-LivePix-Signature') || req.get('X-Signature');
-      const check = crypto.createHmac('sha256', LIVEPIX_WEBHOOK_SECRET).update(raw).digest('hex');
+      const check = crypto.createHmac('sha256', LIVEPIX_WEBHOOK_SECRET)
+                          .update(req.rawBody || Buffer.from(''))
+                          .digest('hex');
       if (!signature || !timingSafeEq(signature, check)) {
         return res.status(401).json({ error:'invalid_signature' });
       }
     }
 
-    // Normalizar payload (ajuste conforme o formato real do LivePix)
-    const ev = req.body?.event || req.body?.type || '';
+    // Normaliza payload (ajuste aos campos reais da LivePix)
     const data = req.body?.data || req.body?.object || req.body || {};
-
-    // Campos esperados (confirme nomes na doc do LivePix):
     const paid = (data.status === 'paid' || data.status === 'succeeded' || data.paid === true);
-    const valorCentavos = Math.round(Number(String(data.amount || data.value || 0)) * 100) || data.amount_cents || 0;
+    const valorCentavos =
+      (typeof data.amount_cents === 'number' ? data.amount_cents :
+       Math.round(Number(String(data.amount || data.value || 0)) * 100)) || 0;
     const nome = data.payer_name || data.customer_name || data.name || 'Contribuinte';
     const meta = data.metadata || {};
 
-    // Só registra quando pago
-    if (!paid) {
-      return res.json({ ok:true, ignored:true });
-    }
-    if (!valorCentavos || valorCentavos < 1) {
-      return res.status(400).json({ error:'valor_invalido' });
-    }
+    if (!paid) return res.json({ ok:true, ignored:true });
+    if (!valorCentavos || valorCentavos < 1) return res.status(400).json({ error:'valor_invalido' });
 
     const id = uid();
     const { rows } = await q(
@@ -380,7 +376,6 @@ app.post('/api/livepix/webhook', async (req, res) => {
     );
 
     sseSendAll('bancas-changed', { reason: 'webhook-paid' });
-
     return res.json({ ok:true, ...rows[0] });
   } catch (e) {
     console.error('livepix webhook:', e.response?.data || e.message);
@@ -389,13 +384,10 @@ app.post('/api/livepix/webhook', async (req, res) => {
 });
 
 /* =========================================================
-   OBS: /api/pix/confirmar (via front) não é necessária no LivePix,
-   pois quem confirma é o WEBHOOK. Mantemos apenas por compatibilidade.
+   Compat: /api/pix/confirmar deixa de ser usado no LivePix
    ========================================================= */
-app.post('/api/pix/confirmar', (req,res)=>{
-  if (isLivePix) {
-    return res.status(400).json({ error:'use_webhook_livepix' });
-  }
+app.post('/api/pix/confirmar', (_req,res)=>{
+  if (isLivePix) return res.status(400).json({ error:'use_webhook_livepix' });
   return res.status(400).json({ error:'no_provider' });
 });
 
@@ -529,9 +521,9 @@ app.patch('/api/pagamentos/:id', areaAuth, async (req,res)=>{
      where id = $1
      returning id, nome,
                pagamento_cents as "pagamentoCents",
-               pix_type as "pixType",
+               pix_type as "PixType",
                pix_key  as "pixKey",
-               status, created_at as "createdAt", paid_at as "paidAt"`,
+               status, created_at as "CreatedAt", paid_at as "PaidAt"`,
     [req.params.id, status]
   );
   if (!rows.length) return res.status(404).json({ error:'not_found' });
