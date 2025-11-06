@@ -1,6 +1,3 @@
-
-
-
 const API = window.location.origin; // mesma origem
 const qs  = (s, r=document) => r.querySelector(s);
 const qsa = (s, r=document) => [...r.querySelectorAll(s)];
@@ -28,7 +25,7 @@ async function apiFetch(path, opts = {}) {
 
 const fmtBRL  = (c)=> (c/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const toCents = (s)=> { const d = (s||'').toString().replace(/\D/g,''); return d ? parseInt(d,10) : 0; };
-const esc     = (s='') => s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+const esc     = (s='') => s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;' }[m]));
 
 /* debounce simples p/ evitar excesso de refresh */
 function debounce(fn, wait = 300){
@@ -124,6 +121,9 @@ function renderPagamentos(){
               ${statusTxt} <span class="caret"></span>
             </button>
 
+            <!-- NOVO: voltar para Bancas -->
+            <button class="btn btn--ghost" data-action="to-banca" data-id="${p.id}">Bancas</button>
+
             <button class="btn btn--primary" data-action="fazer-pix" data-id="${p.id}">Fazer PIX</button>
             <button class="btn btn--danger"  data-action="del-pag"   data-id="${p.id}">Excluir</button>
           </div>
@@ -175,6 +175,17 @@ async function toPagamento(id){
   await Promise.all([loadBancas(), loadPagamentos()]);
   render();
   setupAutoDeleteTimers();
+}
+
+// NOVO: mover de Pagamentos -> Bancas
+async function toBanca(id){
+  await apiFetch(`/api/pagamentos/${encodeURIComponent(id)}/to-banca`, { method:'POST' });
+  // atualiza listas sem trocar de aba
+  await Promise.all([loadPagamentos(), loadBancas()]);
+  render();
+  // se havia timer de auto-delete, cancela
+  const t = STATE.timers.get(id);
+  if (t){ clearTimeout(t); STATE.timers.delete(id); }
 }
 
 async function deleteBanca(id){
@@ -382,6 +393,8 @@ document.addEventListener('click', (e)=>{
   if(action==='del-banca')    return deleteBanca(id).catch(console.error);
   if(action==='fazer-pix')    return abrirPixModal(id);
   if(action==='del-pag')      return deletePagamento(id).catch(console.error);
+  // NOVO: voltar Pagamentos -> Bancas
+  if(action==='to-banca')     return toBanca(id).catch(console.error);
 });
 
 // edição da Banca (R$)
