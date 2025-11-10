@@ -1,4 +1,4 @@
-// server/server.js — versão com Extratos (depósitos + pagamentos) e filtros (corrigido ref_id)
+
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
@@ -17,20 +17,6 @@ import QRCode from 'qrcode';
 import pkg from 'pg';
 const { Pool } = pkg;
 
-/*
-SQL sugerido p/ criar tabela de extratos (apenas referência):
-CREATE TABLE IF NOT EXISTS extratos (
-  id           text PRIMARY KEY,
-  ref_id       text NOT NULL,        -- id de origem (banca.id ou pagamento.id)
-  nome         text NOT NULL,
-  tipo         text NOT NULL,        -- 'deposito' | 'pagamento'
-  valor_cents  integer NOT NULL,
-  created_at   timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS extratos_created_at_idx ON extratos (created_at DESC);
-CREATE INDEX IF NOT EXISTS extratos_tipo_idx       ON extratos (tipo, created_at DESC);
-CREATE INDEX IF NOT EXISTS extratos_ref_idx        ON extratos (ref_id);
-*/
 
 const {
   PORT = 3000,
@@ -52,29 +38,28 @@ const {
 
 const PROD = process.env.NODE_ENV === 'production';
 
-// ===== valida env do login =====
+
 ['ADMIN_USER','ADMIN_PASSWORD_HASH','JWT_SECRET'].forEach(k=>{
   if(!process.env[k]) { console.error(`❌ Falta ${k} no .env (login)`); process.exit(1); }
 });
-// ===== valida env do Efi =====
+
 ['EFI_CLIENT_ID','EFI_CLIENT_SECRET','EFI_CERT_PATH','EFI_KEY_PATH','EFI_PIX_KEY','EFI_BASE_URL','EFI_OAUTH_URL']
   .forEach(k => { if(!process.env[k]) { console.error(`❌ Falta ${k} no .env (Efi)`); process.exit(1); } });
-// ===== valida PG =====
+
 if (!DATABASE_URL) { console.error('❌ Falta DATABASE_URL no .env'); process.exit(1); }
 
-// ===== paths =====
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-const ROOT       = path.resolve(__dirname, STATIC_ROOT || '..'); // raiz do site
+const ROOT       = path.resolve(__dirname, STATIC_ROOT || '..'); 
 
-// ===== PG pool =====
+
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false } // Render PG usa SSL
+  ssl: { rejectUnauthorized: false } 
 });
 const q = (text, params) => pool.query(text, params);
 
-// ===== HTTPS agent APENAS para chamadas ao Efi =====
 const httpsAgent = new https.Agent({
   cert: fs.readFileSync(EFI_CERT_PATH),
   key:  fs.readFileSync(EFI_KEY_PATH),
@@ -103,8 +88,7 @@ function brlStrToCents(strOriginal) {
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function tok(){ return 'tok_' + crypto.randomBytes(18).toString('hex'); }
 
-// ===== store em memória p/ token -> txid (TTL 15 min) =====
-/** tokenStore: token -> { txid, createdAt: ms } */
+
 const tokenStore = new Map();
 const TOKEN_TTL_MS = 15 * 60 * 1000;
 setInterval(() => {
@@ -123,10 +107,10 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(cors({ origin: ORIGIN, credentials: true }));
 
-// Servir estáticos (site completo)
+
 app.use(express.static(ROOT, { extensions: ['html'] }));
 
-// ===== helpers de auth =====
+
 const loginLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
 
 function signSession(payload) { return jwt.sign(payload, JWT_SECRET, { expiresIn: '2h' }); }
@@ -168,7 +152,7 @@ function sseSendAll(event, payload = {}) {
   for (const res of sseClients) { try { res.write(msg); } catch {} }
 }
 
-// Stream protegido por sessão
+
 app.get('/api/stream', requireAuth, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -184,7 +168,7 @@ app.get('/api/stream', requireAuth, (req, res) => {
   req.on('close', () => { clearInterval(ping); sseClients.delete(res); try { res.end(); } catch {} });
 });
 
-// ===== rotas de auth =====
+
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'missing_fields' });
@@ -212,7 +196,7 @@ app.get('/area.html', (req, res) => {
   return res.sendFile(path.join(ROOT, 'area.html'));
 });
 
-// ===== endpoints de verificação geral =====
+
 app.get('/health', async (req, res) => {
   try { fs.accessSync(EFI_CERT_PATH); fs.accessSync(EFI_KEY_PATH); await q('select 1'); return res.json({ ok:true, cert:EFI_CERT_PATH, key:EFI_KEY_PATH, pg:true }); }
   catch (e) { return res.status(500).json({ ok:false, error: e.message }); }
@@ -222,7 +206,7 @@ app.get('/api/pix/ping', async (req, res) => {
   catch (e) { return res.status(500).json({ ok:false, error: e.response?.data || e.message }); }
 });
 
-// ===== API PIX (Efi) — NUNCA devolver txid para o front =====
+
 app.post('/api/pix/cob', async (req, res) => {
   try {
     const { nome, cpf, valorCentavos } = req.body || {};
@@ -255,7 +239,7 @@ app.post('/api/pix/cob', async (req, res) => {
   }
 });
 
-// Status consultado por token opaco (mapeado para txid no back)
+
 app.get('/api/pix/status/:token', async (req, res) => {
   try {
     const rec = tokenStore.get(req.params.token);
@@ -326,7 +310,7 @@ app.post('/api/pix/confirmar', async (req, res) => {
   }
 });
 
-// (Opcional) criar banca pública manual também registra no extrato como depósito manual
+
 app.post('/api/public/bancas', async (req, res) => {
   try{
     if (!APP_PUBLIC_KEY) return res.status(403).json({ error:'public_off' });
@@ -347,7 +331,7 @@ app.post('/api/public/bancas', async (req, res) => {
       [id, nome, depositoCents, null, pixType, pixKey]
     );
 
-    // registra depósito manual no extrato (ref_id = id da banca)
+    
     await q(
       `insert into extratos (id, ref_id, nome, tipo, valor_cents, created_at)
        values ($1,$2,$3,'deposito',$4, now())`,
@@ -365,7 +349,7 @@ app.post('/api/public/bancas', async (req, res) => {
 
 const areaAuth = [requireAuth];
 
-// ===== BANCAS =====
+
 app.get('/api/bancas', areaAuth, async (req, res) => {
   const { rows } = await q(
     `select id, nome,
@@ -561,9 +545,7 @@ app.delete('/api/pagamentos/:id', areaAuth, async (req, res) => {
   res.json({ ok:true });
 });
 
-// ===== EXTRATOS (com filtros) =====
-// Suporta: ?tipo=deposito|pagamento  &nome=  &from=YYYY-MM-DD  &to=YYYY-MM-DD
-//          &range=today|last7|last30  &limit=200
+
 app.get('/api/extratos', areaAuth, async (req, res) => {
   let { tipo, nome, from, to, range, limit = 200 } = req.query || {};
 

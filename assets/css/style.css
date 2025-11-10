@@ -1,24 +1,24 @@
 :root{ 
-  /* === PALETA QUENTE (LARANJA) === */
-  --bg: #110904;            /* fundo laranja-bem-escuro */
-  --bg-2: #140C06;          /* variação p/ degradês */
-  --card: #1A1209;          /* cartão âmbar-escuro */
+  
+  --bg: #110904;           
+  --bg-2: #140C06;         
+  --card: #1A1209;          
   --text: #e7e9f3;
   --muted:#b3b8cc;
 
-  /* Acentos laranja */
-  --brand:#FF7A00;          /* laranja principal */
-  --brand-2:#FFC266;        /* laranja claro p/ gradiente */
+  
+  --brand:#FF7A00;          
+  --brand-2:#FFC266;        
 
   --danger:#ff5c7a;
   --success:#00d18f;
 
-  /* linhas e sombras quentes (sem azul) */
+  
   --line: rgba(255, 180, 120, .16);
   --shadow: 0 22px 60px rgba(40, 20, 5, .65);
   --radius: 18px;
 
-  /* ==> Troque a imagem se ela for azulada: assets/img/banner.jpg */
+ 
   --banner-img: url('../img/banner.jpg');
 }
 
@@ -28,7 +28,7 @@ html,body{height:100%}
 body{
   margin:0;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
-  /* halos laranja em vez de roxo/ciano/azul */
+  
   background:
     radial-gradient(1200px 600px at 18% -8%, rgba(255,122,0,.18), transparent 60%),
     radial-gradient(900px 600px at 110% 8%,  rgba(255,194,102,.12), transparent 60%),
@@ -42,7 +42,7 @@ a{color:var(--brand)}
 header{
   position:sticky; top:0; z-index:10;
   backdrop-filter: blur(12px);
-  /* cabeçalho quente (sem azul/preto frio) */
+ 
   background: linear-gradient(180deg, rgba(20,12,6,.92), rgba(20,12,6,.58));
   border-bottom:1px solid var(--line);
 }
@@ -50,7 +50,7 @@ header{
 .wrap{max-width:1080px;margin:auto;padding:20px}
 .topbar{display:flex;align-items:center;gap:14px;}
 
-/* logo com brilho laranja */
+
 .brand-img{
   height:44px;width:auto;border-radius:10px;
   box-shadow: 0 10px 30px rgba(255,122,0,.22);
@@ -85,12 +85,12 @@ form .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 label{display:block;font-weight:600;margin-bottom:8px}
 .help{color:var(--muted);font-size:.85rem;margin-top:6px}
 
-/* inputs em âmbar-escuro (nada azulado) */
+
 .input{
   width:100%;
   padding:14px 14px;
   border-radius:12px;
-  background:#161006;                  /* trocado o azul escuro por âmbar escuro */
+  background:#161006;                 
   border:1px solid var(--line);
   color:var(--text);
   outline:none;
@@ -109,7 +109,7 @@ select.input{
   padding-right: 40px;
 }
 
-/* CTA laranja */
+
 .cta{
   display:flex;align-items:center;justify-content:center;gap:10px;margin-top:10px;
   padding:16px 18px;border-radius:14px;
@@ -123,22 +123,22 @@ select.input{
 .cta:active{transform: translateY(1px)}
 .cta[disabled]{opacity:.5; cursor:not-allowed;}
 
-/* cartões/resumo laterais quentes */
+
 .aside{display:grid;gap:16px;align-content:start}
 .summary-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
 .summary-list li{
   display:flex;justify-content:space-between;gap:12px;
-  background:#161006;                       /* âmbar escuro */
+  background:#161006;                       
   border:1px solid var(--line);
   padding:12px 14px;border-radius:12px
 }
 .summary-list .k{color:var(--muted)}
 
-/* === Banner com overlay quente + brilho laranja === */
+
 .banner{
   position:relative; min-height:220px;
   border-bottom:1px dashed var(--line);
-  /* se a imagem do banner for azulada, troque o arquivo para combinar com o tema */
+ 
   background: linear-gradient(0deg, rgba(20,12,6,.45), rgba(20,12,6,.22)), var(--banner-img);
   background-size: cover;
   background-position: center;
@@ -156,7 +156,7 @@ select.input{
 }
 @keyframes float{0%,100%{ transform: translateY(0)} 50%{ transform: translateY(-12px)}}
 
-/* toast quente */
+
 .toast{
   position:fixed; right:16px; bottom:16px; display:none;
   background:#161006; border:1px solid var(--line);

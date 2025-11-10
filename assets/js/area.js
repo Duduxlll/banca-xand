@@ -1,7 +1,5 @@
-// area.js — Bancas, Pagamentos e Extratos (com filtros por período)
-// Funciona mesmo se a aba Extratos ainda não existir no HTML (o script não quebra).
 
-const API = window.location.origin; // mesma origem
+const API = window.location.origin; 
 const qs  = (s, r=document) => r.querySelector(s);
 const qsa = (s, r=document) => [...r.querySelectorAll(s)];
 
@@ -12,7 +10,7 @@ function getCookie(name) {
 
 async function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers||{}) };
-  // Envia CSRF em métodos que alteram estado
+  
   if (['POST','PUT','PATCH','DELETE'].includes((opts.method||'GET').toUpperCase())) {
     const csrf = getCookie('csrf');
     if (csrf) headers['X-CSRF-Token'] = csrf;
@@ -30,33 +28,33 @@ const fmtBRL  = (c)=> (c/100).toLocaleString('pt-BR',{style:'currency',currency:
 const toCents = (s)=> { const d = (s||'').toString().replace(/\D/g,''); return d ? parseInt(d,10) : 0; };
 const esc     = (s='') => s.replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
 
-/* debounce simples p/ evitar excesso de refresh */
+
 function debounce(fn, wait = 300){
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
 }
 
-/* ========== Elementos ========== */
+
 const tabBancasEl     = qs('#tab-bancas');
 const tabPagamentosEl = qs('#tab-pagamentos');
-const tabExtratosEl   = qs('#tab-extratos'); // pode não existir ainda
+const tabExtratosEl   = qs('#tab-extratos');
 
 const tbodyBancas     = qs('#tblBancas tbody');
 const tbodyPags       = qs('#tblPagamentos tbody');
 
-// Extratos (podem não existir no HTML ainda)
+
 const tbodyExtDeps    = qs('#tblExtratosDepositos tbody');
 const tbodyExtPags    = qs('#tblExtratosPagamentos tbody');
 
-// Buscas
+
 const buscaInput        = qs('#busca');
 const buscaExtratoInput = qs('#busca-extrato');
 
-// Filtros da aba Extratos (se existirem no HTML)
-const filtroTipo  = qs('#filtro-tipo');    // all | deposito | pagamento
-const filtroRange = qs('#filtro-range');   // today | last7 | last30 | custom
-const filtroFrom  = qs('#filtro-from');    // date (YYYY-MM-DD)
-const filtroTo    = qs('#filtro-to');      // date (YYYY-MM-DD)
+
+const filtroTipo  = qs('#filtro-tipo');    
+const filtroRange = qs('#filtro-range');   
+const filtroFrom  = qs('#filtro-from');    
+const filtroTo    = qs('#filtro-to');      
 const btnFiltrar  = qs('#btn-filtrar');
 const btnLimpar   = qs('#btn-limpar');
 
@@ -65,11 +63,11 @@ const STATE = {
   bancas: [],
   pagamentos: [],
   extratos: { depositos: [], pagamentos: [] },
-  timers: new Map(), // id => timeoutId (auto-delete pagos)
+  timers: new Map(), 
   filtrosExtratos: { tipo:'all', range:'last30', from:null, to:null },
 };
 
-/* ========== Carregamento (preenche STATE) ========== */
+
 async function loadBancas() {
   const list = await apiFetch(`/api/bancas`);
   STATE.bancas = list.sort((a,b)=> (a.createdAt||'') < (b.createdAt||'') ? 1 : -1);
@@ -81,7 +79,7 @@ async function loadPagamentos() {
   return STATE.pagamentos;
 }
 
-/* ===== Extratos ===== */
+
 function buildExtratosQuery(){
   const f = STATE.filtrosExtratos || {};
   const params = new URLSearchParams();
@@ -89,12 +87,12 @@ function buildExtratosQuery(){
   if (f.tipo && f.tipo !== 'all') params.set('tipo', f.tipo);
 
   if (f.range && f.range !== 'custom') {
-    params.set('range', f.range); // today | last7 | last30
+    params.set('range', f.range);
   } else if (f.range === 'custom') {
     if (f.from) params.set('from', f.from);
     if (f.to)   params.set('to',   f.to);
   } else {
-    params.set('range', 'last30'); // padrão
+    params.set('range', 'last30'); 
   }
 
   params.set('limit', '500');
@@ -102,7 +100,7 @@ function buildExtratosQuery(){
 }
 
 async function loadExtratos(){
-  if (!tabExtratosEl) return STATE.extratos; // se aba não existe no HTML, não busca
+  if (!tabExtratosEl) return STATE.extratos; 
   const qsBase = buildExtratosQuery();
   const f = STATE.filtrosExtratos || {};
 
@@ -123,7 +121,7 @@ async function loadExtratos(){
   return STATE.extratos;
 }
 
-/* ========== Render ========== */
+
 async function render(){
   if (TAB==='bancas'){
     tabBancasEl?.classList.add('show');
@@ -207,7 +205,7 @@ function renderPagamentos(){
 function renderExtratos(){
   if (!tabExtratosEl) return;
 
-  // Depósitos
+ 
   if (tbodyExtDeps) {
     const L1 = STATE.extratos.depositos;
     tbodyExtDeps.innerHTML = L1.length ? L1.map(x => `
@@ -219,7 +217,7 @@ function renderExtratos(){
     `).join('') : `<tr><td colspan="3" class="muted" style="padding:14px">Sem depósitos ainda.</td></tr>`;
   }
 
-  // Pagamentos
+ 
   if (tbodyExtPags) {
     const L2 = STATE.extratos.pagamentos;
     tbodyExtPags.innerHTML = L2.length ? L2.map(x => `
@@ -231,14 +229,14 @@ function renderExtratos(){
     `).join('') : `<tr><td colspan="3" class="muted" style="padding:14px">Sem pagamentos ainda.</td></tr>`;
   }
 
-  // filtro local por nome (input da aba extratos)
+  
   const q = (buscaExtratoInput?.value || '').trim().toLowerCase();
   if (q) {
     if (tbodyExtDeps) filtrarTabela(tbodyExtDeps, q);
     if (tbodyExtPags) filtrarTabela(tbodyExtPags, q);
   }
 
-  // se existir select de tipo, oculta/mostra seções
+ 
   if (filtroTipo && tabExtratosEl) {
     const t = (filtroTipo.value||'all');
     const cardDeps = tabExtratosEl.querySelector('[data-card="deps"]') || tabExtratosEl.querySelector('#tblExtratosDepositos')?.closest('.card');
@@ -250,14 +248,14 @@ function renderExtratos(){
   }
 }
 
-/* ========== AÇÕES PRINCIPAIS (API) ========== */
+
 async function setTab(tab){
   TAB = tab;
   localStorage.setItem('area_tab', tab);
   qsa('.nav-btn').forEach(btn=>{
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
-  await refresh(); // carrega listas atualizadas ao trocar de aba
+  await refresh();
 }
 
 async function refresh(){
@@ -276,7 +274,7 @@ function getBancaInputById(id){
 }
 
 async function toPagamento(id){
-  // 1) Se houver edição no input, salva via PATCH antes de mover
+  
   const inp = getBancaInputById(id);
   if (inp) {
     const cents = toCents(inp.value);
@@ -286,21 +284,21 @@ async function toPagamento(id){
     });
   }
 
-  // 2) Agora move para pagamentos
+  
   await apiFetch(`/api/bancas/${encodeURIComponent(id)}/to-pagamento`, { method:'POST' });
 
-  // 3) NÃO muda de aba — recarrega silenciosamente as listas
+  
   await Promise.all([loadBancas(), loadPagamentos()]);
   render();
   setupAutoDeleteTimers();
 }
 
-// mover de Pagamentos -> Bancas (preserva valor manual como bancaCents)
+
 async function toBanca(id){
   await apiFetch(`/api/pagamentos/${encodeURIComponent(id)}/to-banca`, { method:'POST' });
   await Promise.all([loadPagamentos(), loadBancas()]);
   render();
-  // se havia timer de auto-delete, cancela
+  
   const t = STATE.timers.get(id);
   if (t){ clearTimeout(t); STATE.timers.delete(id); }
 }
@@ -329,7 +327,7 @@ async function setStatus(id, value){
   if (!item) return;
 
   if (value === 'pago') {
-    // agenda auto delete em 3 minutos (considerando paidAt do servidor)
+    
     scheduleAutoDelete(item);
   } else {
     const t = STATE.timers.get(id);
@@ -337,7 +335,7 @@ async function setStatus(id, value){
   }
 }
 
-/* ========== Auto delete de "pago" em 3 minutos ========== */
+
 function scheduleAutoDelete(item){
   const { id, paidAt } = item;
   if (!paidAt) return;
@@ -357,7 +355,7 @@ function setupAutoDeleteTimers(){
   });
 }
 
-/* ========== Modal simples “Fazer PIX” ========== */
+
 function abrirPixModal(id){
   const p = STATE.pagamentos.find(x=>x.id===id);
   if(!p) return;
@@ -403,7 +401,7 @@ function abrirPixModal(id){
   dlg.showModal();
 }
 
-/* ========== MENU FLUTUANTE (PORTAL) — Pago / Não pago ========== */
+
 let statusMenuEl = null;
 let statusMenuId = null;
 
@@ -434,12 +432,12 @@ function showStatusMenu(anchorBtn, id, current){
   const m = ensureStatusMenu();
   statusMenuId = id;
 
-  // marca a atual
+ 
   qsa('.status-item', m).forEach(b=>{
     b.classList.toggle('active', b.dataset.value === current);
   });
 
-  // posiciona (abre pra cima se faltar espaço)
+  
   const r = anchorBtn.getBoundingClientRect();
   m.style.display = 'block';
   m.style.visibility = 'hidden';
@@ -450,7 +448,7 @@ function showStatusMenu(anchorBtn, id, current){
   const spaceBelow = window.innerHeight - r.bottom;
   let top = r.bottom + 6;
   if(spaceBelow < mh + 8){
-    top = r.top - mh - 6;  // dropup
+    top = r.top - mh - 6; 
   }
   const left = Math.min(Math.max(8, r.left), window.innerWidth - mw - 8);
 
@@ -467,7 +465,7 @@ function hideStatusMenu(){
   statusMenuId = null;
 }
 
-// abre/fecha via clique
+
 document.addEventListener('click', (e)=>{
   const openBtn = e.target.closest('button[data-action="status-open"]');
   if(openBtn){
@@ -481,13 +479,13 @@ document.addEventListener('click', (e)=>{
   if(!e.target.closest('.status-float')) hideStatusMenu();
 });
 
-// rolar/resize fecha menu
+
 ['scroll','resize'].forEach(ev=>{
   window.addEventListener(ev, hideStatusMenu, {passive:true});
 });
 qsa('.table-wrap').forEach(w=> w.addEventListener('scroll', hideStatusMenu, {passive:true}));
 
-/* ========== EVENTOS GLOBAIS ========== */
+
 qsa('.nav-btn').forEach(btn=>{
   btn.addEventListener('click', ()=> setTab(btn.dataset.tab));
 });
@@ -501,10 +499,10 @@ document.addEventListener('click', (e)=>{
   if(action==='del-banca')    return deleteBanca(id).catch(console.error);
   if(action==='fazer-pix')    return abrirPixModal(id);
   if(action==='del-pag')      return deletePagamento(id).catch(console.error);
-  if(action==='to-banca')     return toBanca(id).catch(console.error); // novo
+  if(action==='to-banca')     return toBanca(id).catch(console.error); 
 });
 
-// edição da Banca (R$)
+
 document.addEventListener('input', (e)=>{
   const inp = e.target.closest('input[data-role="banca"]');
   if(!inp) return;
@@ -515,7 +513,7 @@ document.addEventListener('input', (e)=>{
   inp.value = fmtBRL(parseInt(v,10));
 });
 
-// salvar PATCH ao sair do campo
+
 document.addEventListener('blur', async (e)=>{
   const inp = e.target.closest('input[data-role="banca"]');
   if(!inp) return;
@@ -533,7 +531,7 @@ document.addEventListener('blur', async (e)=>{
   }
 }, true);
 
-// busca (bancas/pagamentos)
+
 function filtrarTabela(tbody, q){
   if(!tbody) return;
   const query = (q||'').trim().toLowerCase();
@@ -547,13 +545,13 @@ buscaInput?.addEventListener('input', ()=>{
   else                filtrarTabela(tbodyPags,   q);
 });
 
-// ===== Filtros da aba Extratos =====
+
 function readExtratoFiltersFromDOM(){
   const f = STATE.filtrosExtratos;
   if (filtroTipo)  f.tipo  = filtroTipo.value || 'all';
   if (filtroRange) f.range = filtroRange.value || 'last30';
-  if (filtroFrom)  f.from  = filtroFrom.value || null;  // YYYY-MM-DD
-  if (filtroTo)    f.to    = filtroTo.value   || null;  // YYYY-MM-DD
+  if (filtroFrom)  f.from  = filtroFrom.value || null;  
+  if (filtroTo)    f.to    = filtroTo.value   || null;  
 }
 function applyExtratoFiltersUIRules(){
   if (!filtroRange) return;
@@ -577,12 +575,12 @@ btnLimpar?.addEventListener('click',    async ()=>{
   renderExtratos();
 });
 
-/* ========== SSE (ao vivo) ========== */
+
 let es = null;
 
 function startStream(){
   if (es) try { es.close(); } catch {}
-  // mesma origem; cookies inclusos automaticamente em mesma origem
+  
   es = new EventSource(`${API}/api/stream`);
 
   const softRefreshBancas = debounce(async () => {
@@ -606,25 +604,25 @@ function startStream(){
   es.addEventListener('bancas-changed',     softRefreshBancas);
   es.addEventListener('pagamentos-changed', softRefreshPags);
   es.addEventListener('extratos-changed',   softRefreshExt);
-  es.addEventListener('ping', () => {}); // keepalive
+  es.addEventListener('ping', () => {}); 
 
   es.onerror = () => {
     try { es.close(); } catch {}
-    setTimeout(startStream, 3000); // backoff simples
+    setTimeout(startStream, 3000); 
   };
 }
 
-/* ========== start ========== */
+
 document.addEventListener('DOMContentLoaded', async ()=>{
   qsa('.nav-btn').forEach(btn=>{
     btn.classList.toggle('active', btn.dataset.tab === TAB);
   });
 
-  // Ajusta UI dos filtros (se existir)
+  
   applyExtratoFiltersUIRules();
   readExtratoFiltersFromDOM();
 
-  // carrega as listas inicialmente (as 3, se a aba extratos existir)
+  
   const loaders = [loadBancas(), loadPagamentos()];
   if (tabExtratosEl) loaders.push(loadExtratos());
   await Promise.all(loaders);
@@ -632,6 +630,6 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   setupAutoDeleteTimers();
   render();
 
-  // liga o “ao vivo”
+ 
   startStream();
 });

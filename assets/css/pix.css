@@ -1,4 +1,4 @@
-/* ===== PIX Modal – tema laranja ===== */
+
 
 #pixModal.pix-modal {
   border: 0;
@@ -6,7 +6,7 @@
   background: transparent;
 }
 #pixModal.pix-modal::backdrop {
-  /* antes azul: rgba(4,10,22,.65) */
+ 
   background: rgba(16, 8, 4, .65);
   backdrop-filter: blur(2px);
 }
@@ -16,10 +16,10 @@
   margin: 0 auto;
   background:
     linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
-  /* usa linha mais quente se existir var(--line) */
+  
   border: 1px solid var(--line, rgba(255,180,120,.16));
   border-radius: 18px;
-  /* sombra com tom quente */
+  
   box-shadow: 0 28px 80px rgba(40,20,5,.65), inset 0 1px 0 rgba(255,255,255,.05);
   color: #e7e9f3;
   padding: 18px;
@@ -46,7 +46,7 @@
   border-radius: 14px;
   background: #fff;
   padding: 12px;
-  /* borda dupla pra destacar no tema escuro */
+  
   box-shadow:
     0 8px 26px rgba(0,0,0,.45),
     0 0 0 1px rgba(255,255,255,.08),
@@ -68,14 +68,14 @@
   width: 100%;
   padding: 14px;
   border-radius: 12px;
-  /* antes #0e1327 (azulado) -> âmbar escuro */
+ 
   background: #161006;
   border: 1px solid var(--line, rgba(255,180,120,.16));
   color: #e7e9f3;
   outline: none;
   font-size: .95rem;
 }
-/* foco: laranja (usa var(--brand) se existir) */
+
 .pix-emv:focus{
   border-color: var(--brand, #FF7A00);
   box-shadow: 0 0 0 4px rgba(255,122,0,.20);
@@ -88,8 +88,7 @@
   margin-top: 10px;
 }
 
-/* herda seus estilos base de .btn do site;
-   aqui só garantimos raio p/ combinar */
+
 .pix-copy.btn,
 .pix-close.btn-outline{
   border-radius: 12px;
@@ -103,7 +102,6 @@
   font-size: .95rem;
 }
 
-/* estado pago continua verde */
 .pix-status.ok{
   color: #00d18f;
   font-weight: 700;

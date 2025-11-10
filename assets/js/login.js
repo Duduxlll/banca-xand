@@ -1,6 +1,6 @@
 const err = document.querySelector('#err');
 const form = document.querySelector('#loginForm');
-const API  = window.location.origin; // mesmo host do server
+const API  = window.location.origin; 
 
 form.addEventListener('submit', async (e)=>{
   e.preventDefault();
@@ -13,7 +13,7 @@ form.addEventListener('submit', async (e)=>{
     const r = await fetch(`${API}/api/auth/login`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      credentials: 'include', // importante para cookies
+      credentials: 'include', 
       body: JSON.stringify({ username, password })
     });
     if(!r.ok){
