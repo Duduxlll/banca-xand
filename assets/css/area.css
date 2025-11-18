@@ -187,7 +187,6 @@ body{
 }
 .table-wrap, .card, .content, .layout { z-index: 0; position: relative; }
 
-
 .status-menu.dropup{
   top: auto;
   bottom: 100%;
@@ -195,15 +194,9 @@ body{
   margin-bottom: 6px;
 }
 
-
 .status-menu{ z-index: 9999; }
-
-
 .status-btn{ position: relative; z-index: 10; }
-
-
 .table tbody tr, .table tbody td { overflow: visible; }
-
 
 .status{ position: relative; display: inline-block; }
 .status-btn{
@@ -220,7 +213,7 @@ body{
 
 .status-menu{
   position:absolute; top:100%; left:0; margin-top:6px;
-  background:#1A1209; border:1px solid rgba(255,255,255,.12); border-radius:10px;
+  background:#0e1327; border:1px solid rgba(255,255,255,.12); border-radius:10px;
   box-shadow: var(--shadow); display:none; overflow:hidden; z-index:20;
 }
 .status-menu.show{ display:block; }
@@ -233,15 +226,13 @@ body{
 .status-opt.status--pago{ color: var(--ok); }
 .status-opt.status--nao{ color: #ff9aa6; }
 
-
 .col-acoes{ width:1%; white-space:nowrap; }
-
 
 .status-float{
   position: fixed;
   top: 0; left: 0;
   display: none;
-  background:#1A1209;
+  background:#0e1327;
   border:1px solid rgba(255,255,255,.12);
   border-radius:10px;
   box-shadow: var(--shadow);
@@ -266,7 +257,6 @@ body{
 
 .status-item.pago{ color: var(--ok); }
 .status-item.nao { color: var(--danger); }
-
 
 .status-btn{ position: relative; z-index: 1; }
 
@@ -449,3 +439,4 @@ body{
 #tab-pagamentos [data-action="to-banca"].btn:hover{
   box-shadow: 0 10px 26px rgba(255,122,0,.22);
 }
+
